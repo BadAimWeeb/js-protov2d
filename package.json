@@ -1,0 +1,34 @@
+{
+  "name": "@badaimweeb/js-protov2d",
+  "version": "0.1.0",
+  "description": "libp2p-less/hardlinked variant of ProtoV2",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prepublishOnly": "npm run build",
+    "build": "tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BadAimWeeb/js-protov2d.git"
+  },
+  "author": "BadAimWeeb",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/BadAimWeeb/js-protov2d/issues"
+  },
+  "homepage": "https://github.com/BadAimWeeb/js-protov2d#readme",
+  "devDependencies": {
+    "@types/msgpack-lite": "^0.1.8",
+    "@types/node": "^18.14.6",
+    "@types/ws": "^8.5.4",
+    "typescript": "^4.9.5"
+  },
+  "dependencies": {
+    "isomorphic-ws": "^5.0.0",
+    "kyber-crystals": "^1.0.5",
+    "msgpack-lite": "^0.1.26",
+    "superdilithium": "^2.0.3",
+    "ws": "^8.12.1"
+  }
+}
