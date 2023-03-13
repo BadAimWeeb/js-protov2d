@@ -237,11 +237,9 @@ export class ProtoV2dServer extends EventEmitter {
 
                                     client.send([0x02].concat(Array.from(iv), Array.from(new Uint8Array(encryptedData))));
 
-                                    setTimeout(() => {
-                                        if (newSession)
-                                            // Emit connection event
-                                            this.emit("connection", oConnection);
-                                    }, 50);
+                                    if (newSession)
+                                        // Emit connection event
+                                        this.emit("connection", oConnection);
                                 } else {
                                     // Invalid session ID
                                     client.terminate();
