@@ -258,7 +258,7 @@ export class ProtoV2dServer extends EventEmitter {
 
                         if (dd[0] === 1) {
                             // QoS 1 packet
-                            let dupID = (dd[1] << 24) | (dd[2] << 16) | (dd[3] << 8) | data[4];
+                            let dupID = (dd[1] << 24) | (dd[2] << 16) | (dd[3] << 8) | dd[4];
                             if (dd[5] === 0xFF) {
                                 // ACK packet
                                 oConnection.qos1Accepted.add(dupID);
