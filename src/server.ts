@@ -1,4 +1,4 @@
-import ws from "ws";
+import ws, { type AddressInfo } from "ws";
 import { EventEmitter } from "events";
 import { Buffer } from "buffer";
 import { encode, decode } from "msgpack-lite";
@@ -8,7 +8,7 @@ import pkg2 from "superdilithium";
 const { kyber } = pkg1;
 const { superDilithium } = pkg2;
 
-import { randomString } from "./utils.js";
+import { randomString, Uint8ArrayToHex, hexToUint8Array } from "./utils.js";
 
 const SubtleCrypto = crypto.subtle;
 
@@ -29,6 +29,11 @@ export class ProtoV2dServer extends EventEmitter {
     private wsServer: ws.Server;
     private sessions: Map<string, ProtoV2dSession> = new Map();
 
+    get port() {
+        return (this.wsServer.address() as AddressInfo)
+            .port;
+    }
+
     constructor(private config: ServerConfig) {
         super();
         this.wsServer = new ws.Server({ port: config.port });
@@ -43,6 +48,7 @@ export class ProtoV2dServer extends EventEmitter {
         let oConnection: ProtoV2dSession | null = null;
 
         client.on("message", async (data: ws.Data) => {
+            //console.log("C-[S]", data);
             try {
                 let d: Uint8Array;
                 if (typeof data === "string") {
@@ -70,11 +76,12 @@ export class ProtoV2dServer extends EventEmitter {
                         iv: iv
                     }, encryptionKey, encryptedData);
 
+                    //console.log("C*[S]", Buffer.from([d[0], ...new Uint8Array(decryptedData)]));
+
                     // Decode the data
                     return d[0] === 0x03 ? new Uint8Array(decryptedData) : decode(new Uint8Array(decryptedData));
                 })() : decode(d.slice(1)));
 
-                let decodedData = decode(d.slice(1)) as unknown[];
                 switch (ch) {
                     case 0x02: {
                         if (handshaked) {
@@ -82,7 +89,7 @@ export class ProtoV2dServer extends EventEmitter {
                             throw new Error("Handshake already done");
                         }
 
-                        let hsID = decodedData[1] as number;
+                        let hsID = dd[0] as number;
                         switch (hsID) {
                             case 1: {
                                 let keyPair = await kyber.keyPair();
@@ -95,7 +102,12 @@ export class ProtoV2dServer extends EventEmitter {
 
                                 asymmKey = keyPair;
 
-                                client.send([0x02].concat(Array.from(encode([1, keyPair.publicKey, signature, this.config.publicKey]))));
+                                client.send([0x02].concat(Array.from(encode([
+                                    2, 
+                                    Uint8ArrayToHex(keyPair.publicKey), 
+                                    Uint8ArrayToHex(signature),
+                                    this.config.publicKey
+                                ]))));
                                 break;
                             }
 
@@ -106,9 +118,7 @@ export class ProtoV2dServer extends EventEmitter {
 
                             case 3: {
                                 // Decrypt to get AES key
-                                let aesKey = await kyber.decrypt(Uint8Array.from(
-                                    (dd[1].match(/[0-9a-f]{2}/g) ?? []).map((x: string) => parseInt(x, 16))
-                                ), asymmKey!.privateKey);
+                                let aesKey = await kyber.decrypt(hexToUint8Array(dd[1]), asymmKey!.privateKey);
 
                                 // Import the key
                                 encryptionKey = await SubtleCrypto.importKey(
@@ -149,6 +159,7 @@ export class ProtoV2dServer extends EventEmitter {
                                 )) {
                                     // Handshake successful
                                     handshaked = true;
+                                    let newSession = false;
 
                                     // Test if session exists
                                     if (this.sessions.has(dd[1])) {
@@ -159,9 +170,17 @@ export class ProtoV2dServer extends EventEmitter {
                                         oConnection = new ProtoV2dSession(dd[1], false);
                                         this.sessions.set(dd[1], oConnection);
 
+                                        newSession = true;
+
                                         // Emit connection event
                                         this.emit("connection", oConnection);
                                     }
+
+                                    client.on("close", function a() {
+                                        client.removeAllListeners();
+                                        oConnection.removeListener("data_ret", handleDataSend);
+                                        oConnection.removeListener("qos1:queued", handleDataRequeue);
+                                    });
 
                                     async function handleDataSend(qos: number, data: Uint8Array, dupID?: number) {
                                         let constructedData: Uint8Array;
@@ -212,6 +231,14 @@ export class ProtoV2dServer extends EventEmitter {
                                     // Send all queued data
                                     handleDataRequeue();
                                     oConnection.on("qos1:queued", handleDataRequeue);
+
+                                    let iv = crypto.getRandomValues(new Uint8Array(16));
+                                    let encryptedData = await SubtleCrypto.encrypt({
+                                        name: "AES-GCM",
+                                        iv: iv
+                                    }, encryptionKey, encode([6, newSession]));
+
+                                    client.send([0x02].concat(Array.from(iv), Array.from(new Uint8Array(encryptedData))));
                                 } else {
                                     // Invalid session ID
                                     client.terminate();
@@ -222,16 +249,19 @@ export class ProtoV2dServer extends EventEmitter {
                     }
 
                     case 0x03: {
-                        if (!handshaked) client.terminate();
+                        if (!handshaked) {
+                            client.terminate();
+                            break;
+                        }
 
-                        if (data[0] === 1) {
+                        if (dd[0] === 1) {
                             // QoS 1 packet
-                            let dupID = (data[1] << 24) | (data[2] << 16) | (data[3] << 8) | data[4];
-                            if (data[5] === 0xFF) {
+                            let dupID = (dd[1] << 24) | (dd[2] << 16) | (dd[3] << 8) | data[4];
+                            if (dd[5] === 0xFF) {
                                 // ACK packet
                                 oConnection.qos1Accepted.add(dupID);
                             } else {
-                                let packetData = (data as Uint8Array).slice(6);
+                                let packetData = dd.slice(6);
 
                                 oConnection.qos1Accepted.add(dupID);
                                 oConnection.emit("data", 1, packetData);
@@ -258,7 +288,7 @@ export class ProtoV2dServer extends EventEmitter {
                             }
                         } else {
                             // QoS 0 packet
-                            let packetData = (data as Uint8Array).slice(1);
+                            let packetData = dd.slice(1);
                             oConnection.emit("data", 0, packetData);
                         }
                     }

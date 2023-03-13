@@ -36,7 +36,12 @@ export default class ProtoV2dSession extends EventEmitter {
     send(QoS: 0 | 1, data: Uint8Array): void {
         if (QoS === 1) {
             let dupID = (this.qos1Counter++ << 1) | (this.isClientSide ? 0 : 1);
-            this.emit("data_ret", QoS, data, dupID);
+            let isListening = this.emit("data_ret", QoS, data, dupID);
+
+            if (!isListening) {
+                this.qos1Buffer.push([dupID, data]);
+                this.emit("qos1:queued", dupID);
+            }
         } else {
             this.emit("data_ret", QoS, data);
         }

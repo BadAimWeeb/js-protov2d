@@ -4,7 +4,7 @@
   "description": "libp2p-less/hardlinked variant of ProtoV2",
   "main": "dist/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node dist/test/index.js",
     "prepublishOnly": "npm run build",
     "build": "tsc"
   },
@@ -30,5 +30,6 @@
     "msgpack-lite": "^0.1.26",
     "superdilithium": "^2.0.3",
     "ws": "^8.12.1"
-  }
+  },
+  "type": "module"
 }
