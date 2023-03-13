@@ -280,8 +280,6 @@ export function connect(config: ClientConfig, reconnectionData?: {
 
                     case 0x03: {
                         if (!handshaked) {
-                            ws.terminate();
-                            reject(new Error("Invalid handshake: Server OP received"));
                             return;
                         }
 

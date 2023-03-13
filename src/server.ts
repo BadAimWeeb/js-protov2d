@@ -103,8 +103,8 @@ export class ProtoV2dServer extends EventEmitter {
                                 asymmKey = keyPair;
 
                                 client.send([0x02].concat(Array.from(encode([
-                                    2, 
-                                    Uint8ArrayToHex(keyPair.publicKey), 
+                                    2,
+                                    Uint8ArrayToHex(keyPair.publicKey),
                                     Uint8ArrayToHex(signature),
                                     this.config.publicKey
                                 ]))));
@@ -171,9 +171,6 @@ export class ProtoV2dServer extends EventEmitter {
                                         this.sessions.set(dd[1], oConnection);
 
                                         newSession = true;
-
-                                        // Emit connection event
-                                        this.emit("connection", oConnection);
                                     }
 
                                     client.on("close", function a() {
@@ -239,6 +236,12 @@ export class ProtoV2dServer extends EventEmitter {
                                     }, encryptionKey, encode([6, newSession]));
 
                                     client.send([0x02].concat(Array.from(iv), Array.from(new Uint8Array(encryptedData))));
+
+                                    setTimeout(() => {
+                                        if (newSession)
+                                            // Emit connection event
+                                            this.emit("connection", oConnection);
+                                    }, 50);
                                 } else {
                                     // Invalid session ID
                                     client.terminate();
@@ -250,8 +253,7 @@ export class ProtoV2dServer extends EventEmitter {
 
                     case 0x03: {
                         if (!handshaked) {
-                            client.terminate();
-                            break;
+                            return;
                         }
 
                         if (dd[0] === 1) {
