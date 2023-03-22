@@ -2,7 +2,7 @@
 
 > ⚠️ This package is still in development, but should be usable. Use at your own risk, and please report any bugs you find.
 
-ProtoV2d is a variant of [https://github.com/BadAimWeeb/js-protov2](ProtoV2) protocol, removing libp2p and instead only uses WebSocket to communicate. This results in not being able to seamlessly move the servers, but is much more lightweight and easier to use.
+ProtoV2d is a variant of [ProtoV2](https://github.com/BadAimWeeb/js-protov2) protocol, removing libp2p and instead only uses WebSocket to communicate. This results in not being able to seamlessly move the servers, but is much more lightweight and easier to use.
 
 This package will expose a quantum-resistant encrypted tunnel, even when using unsecured WebSocket connections, and can be reconnectable even when using different client IP addresses.
 
