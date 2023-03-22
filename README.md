@@ -6,6 +6,8 @@ ProtoV2d is a variant of [ProtoV2](https://github.com/BadAimWeeb/js-protov2) pro
 
 This package will expose a quantum-resistant encrypted tunnel, even when using unsecured WebSocket connections, and can be reconnectable even when using different client IP addresses.
 
+This package works best when used with [DTSocket](https://github.com/BadAimWeeb/js-dtsocket).
+
 ```mermaid
 sequenceDiagram
     Client->>Server: Request handshake
