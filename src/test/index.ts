@@ -1,14 +1,11 @@
-import { connect, Server } from "../index.js";
-import { Buffer } from "buffer";
+import { connect, Server, keyGeneration } from "../index.js";
 
-import pkg from "superdilithium";
-const { superDilithium } = pkg;
-let keyPair = await superDilithium.keyPair();
+let k = await keyGeneration();
 
 let server = new Server({
     port: 0,
-    privateKey: Array.from(keyPair.privateKey).map((x) => x.toString(16).padStart(2, "0")).join(""),
-    publicKey: Array.from(keyPair.publicKey).map((x) => x.toString(16).padStart(2, "0")).join("")
+    privateKey: k.privateKey,
+    publicKey: k.publicKey
 });
 
 // Get port 
@@ -30,7 +27,7 @@ let client = await connect({
     url: `ws://localhost:${port}`,
     publicKey: {
         type: "key",
-        key: Array.from(keyPair.publicKey).map((x) => x.toString(16).padStart(2, "0")).join("")
+        key: k.publicKey
     }
 });
 

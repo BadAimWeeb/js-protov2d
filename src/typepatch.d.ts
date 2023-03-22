@@ -1,3 +1,4 @@
+
 declare module 'superdilithium' {
 	interface ISuperDilithium {
 		/** Signature length. */
@@ -13,7 +14,7 @@ declare module 'superdilithium' {
 		publicKeyBytes: Promise<number>;
 
 		/** Serializes key pair. */
-		exportKeys (keyPair: {publicKey: Uint8Array}) : Promise<{
+		exportKeys(keyPair: { publicKey: Uint8Array }): Promise<{
 			private: {
 				classical: null;
 				combined: null;
@@ -30,13 +31,13 @@ declare module 'superdilithium' {
 		 * Serializes key pair with optional encryption.
 		 * Using encryption (a password) requires native crypto support.
 		 */
-		exportKeys (
+		exportKeys(
 			keyPair: {
 				privateKey: Uint8Array;
 				publicKey: Uint8Array;
 			},
 			password?: string
-		) : Promise<{
+		): Promise<{
 			private: {
 				classical: string;
 				combined: string;
@@ -50,18 +51,18 @@ declare module 'superdilithium' {
 		}>;
 
 		/** SHA-512 hash. */
-		hash (message: Uint8Array|string, onlyBinary: true) : Promise<Uint8Array>;
+		hash(message: Uint8Array | string, onlyBinary: true): Promise<Uint8Array>;
 
 		/** SHA-512 hash. */
-		hash (message: Uint8Array|string, onlyBinary?: false) : Promise<{
+		hash(message: Uint8Array | string, onlyBinary?: false): Promise<{
 			binary: Uint8Array;
 			hex: string;
 		}>;
 
 		/** Imports exported keys and creates key pair object. */
-		importKeys (keyData: {
-			public: {classical: string; postQuantum: string}|{combined: string}
-		}) : Promise<{
+		importKeys(keyData: {
+			public: { classical: string; postQuantum: string } | { combined: string }
+		}): Promise<{
 			privateKey: null;
 			publicKey: Uint8Array;
 		}>;
@@ -70,125 +71,124 @@ declare module 'superdilithium' {
 		 * Imports exported keys and creates key pair object.
 		 * Using a password requires native crypto support.
 		 */
-		importKeys (
+		importKeys(
 			keyData: {
-				private: {classical: string; postQuantum: string}|{combined: string};
+				private: { classical: string; postQuantum: string } | { combined: string };
 				public?: any;
 			},
 			password?: string
-		) : Promise<{
+		): Promise<{
 			privateKey: Uint8Array;
 			publicKey: Uint8Array;
 		}>;
 
 		/** Generates key pair. */
-		keyPair () : Promise<{privateKey: Uint8Array; publicKey: Uint8Array}>;
+		keyPair(): Promise<{ privateKey: Uint8Array; publicKey: Uint8Array }>;
 
 		/** Verifies signed message against publicKey and returns it. */
-		open (
-			signed: Uint8Array|string,
-			publicKey: Uint8Array|{
-				public: {classical: string; postQuantum: string}|{combined: string}
+		open(
+			signed: Uint8Array | string,
+			publicKey: Uint8Array | {
+				public: { classical: string; postQuantum: string } | { combined: string }
 			},
-			additionalData?: Uint8Array|string,
-			knownGoodHash?: Uint8Array|string
-		) : Promise<Uint8Array>;
+			additionalData?: Uint8Array | string,
+			knownGoodHash?: Uint8Array | string
+		): Promise<Uint8Array>;
 
 		/** Verifies signed message against publicKey and returns it. */
-		open (
-			signed: Uint8Array|string,
-			publicKey: Uint8Array|{
-				public: {classical: string; postQuantum: string}|{combined: string}
+		open(
+			signed: Uint8Array | string,
+			publicKey: Uint8Array | {
+				public: { classical: string; postQuantum: string } | { combined: string }
 			},
-			additionalData?: Uint8Array|string,
-			knownGoodHash?: Uint8Array|string,
+			additionalData?: Uint8Array | string,
+			knownGoodHash?: Uint8Array | string,
 			includeHash?: boolean
-		) : Promise<{
+		): Promise<{
 			hash: Uint8Array;
 			message: Uint8Array;
 		}>;
 
 		/** Verifies signed message against publicKey and returns it decoded to a string. */
-		openString (
-			signed: Uint8Array|string,
-			publicKey: Uint8Array|{
-				public: {classical: string; postQuantum: string}|{combined: string}
+		openString(
+			signed: Uint8Array | string,
+			publicKey: Uint8Array | {
+				public: { classical: string; postQuantum: string } | { combined: string }
 			},
-			additionalData?: Uint8Array|string,
-			knownGoodHash?: Uint8Array|string
-		) : Promise<string>;
+			additionalData?: Uint8Array | string,
+			knownGoodHash?: Uint8Array | string
+		): Promise<string>;
 
 		/** Verifies signed message against publicKey and returns it decoded to a string. */
-		openString (
-			signed: Uint8Array|string,
-			publicKey: Uint8Array|{
-				public: {classical: string; postQuantum: string}|{combined: string}
+		openString(
+			signed: Uint8Array | string,
+			publicKey: Uint8Array | {
+				public: { classical: string; postQuantum: string } | { combined: string }
 			},
-			additionalData?: Uint8Array|string,
-			knownGoodHash?: Uint8Array|string,
+			additionalData?: Uint8Array | string,
+			knownGoodHash?: Uint8Array | string,
 			includeHash?: boolean
-		) : Promise<{
+		): Promise<{
 			hash: string;
 			message: Uint8Array;
 		}>;
 
 		/** Signs message with privateKey and returns combined message. */
-		sign (
-			message: Uint8Array|string,
+		sign(
+			message: Uint8Array | string,
 			privateKey: Uint8Array,
-			additionalData?: Uint8Array|string
-		) : Promise<Uint8Array>;
+			additionalData?: Uint8Array | string
+		): Promise<Uint8Array>;
 
 		/** Signs message with privateKey and returns combined message encoded as base64. */
-		signBase64 (
-			message: Uint8Array|string,
+		signBase64(
+			message: Uint8Array | string,
 			privateKey: Uint8Array,
-			additionalData?: Uint8Array|string
-		) : Promise<string>;
+			additionalData?: Uint8Array | string
+		): Promise<string>;
 
 		/** Signs message with privateKey and returns signature. */
-		signDetached (
-			message: Uint8Array|string,
+		signDetached(
+			message: Uint8Array | string,
 			privateKey: Uint8Array,
-			additionalData?: Uint8Array|string,
+			additionalData?: Uint8Array | string,
 			preHashed?: boolean
-		) : Promise<Uint8Array>;
+		): Promise<Uint8Array>;
 
 		/** Signs message with privateKey and returns signature encoded as base64. */
-		signDetachedBase64 (
-			message: Uint8Array|string,
+		signDetachedBase64(
+			message: Uint8Array | string,
 			privateKey: Uint8Array,
-			additionalData?: Uint8Array|string,
+			additionalData?: Uint8Array | string,
 			preHashed?: boolean
-		) : Promise<string>;
+		): Promise<string>;
 
 		/** Verifies detached signature against publicKey. */
-		verifyDetached (
-			signature: Uint8Array|string,
-			message: Uint8Array|string,
-			publicKey: Uint8Array|{
-				public: {classical: string; postQuantum: string}|{combined: string}
+		verifyDetached(
+			signature: Uint8Array | string,
+			message: Uint8Array | string,
+			publicKey: Uint8Array | {
+				public: { classical: string; postQuantum: string } | { combined: string }
 			},
-			additionalData?: Uint8Array|string,
-			knownGoodHash?: Uint8Array|string
-		) : Promise<boolean>;
+			additionalData?: Uint8Array | string,
+			knownGoodHash?: Uint8Array | string
+		): Promise<boolean>;
 
 		/** Verifies detached signature against publicKey. */
-		verifyDetached (
-			signature: Uint8Array|string,
-			message: Uint8Array|string,
-			publicKey: Uint8Array|{
-				public: {classical: string; postQuantum: string}|{combined: string}
+		verifyDetached(
+			signature: Uint8Array | string,
+			message: Uint8Array | string,
+			publicKey: Uint8Array | {
+				public: { classical: string; postQuantum: string } | { combined: string }
 			},
-			additionalData?: Uint8Array|string,
-			knownGoodHash?: Uint8Array|string,
+			additionalData?: Uint8Array | string,
+			knownGoodHash?: Uint8Array | string,
 			includeHash?: boolean
-		) : Promise<{
+		): Promise<{
 			hash: Uint8Array;
 			valid: boolean;
 		}>;
 	}
 
-	// @ts-ignore
 	const superDilithium: ISuperDilithium;
 }

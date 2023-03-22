@@ -25,22 +25,15 @@ sequenceDiagram
 Install:
 
 ```bash
-npm install @badaimweeb/js-protov2d superdilithium
+npm install @badaimweeb/js-protov2d
 ```
 
 Preshared key generation:
 
 ```ts
-import pkg from "superdilithium";
-const { superDilithium } = pkg;
-let keyPair = await superDilithium.keyPair();
+import { keyGeneration } from "@badaimweeb/js-protov2d";
 
-let uint8tohex = (arr: Uint8Array) => Array.from(arr).map((x) => x.toString(16).padStart(2, "0")).join("");
-
-let privateKey: string = uint8tohex(keyPair.privateKey);
-let publicKey: string = uint8tohex(keyPair.publicKey);
-let publicKeyHash: string = uint8tohex(new Uint8Array(await crypto.subtle.digest("SHA-256", keyPair.publicKey)));
-
+let { privateKey, publicKey, publicKeyHash } = await keyGeneration();
 // Note: you should only share public key hash since public key is well over 6kb
 ```
 
