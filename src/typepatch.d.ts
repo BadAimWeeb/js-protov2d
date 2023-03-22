@@ -188,4 +188,7 @@ declare module 'superdilithium' {
 			valid: boolean;
 		}>;
 	}
+
+	// @ts-ignore
+	const superDilithium: ISuperDilithium;
 }
