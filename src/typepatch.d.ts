@@ -188,6 +188,4 @@ declare module 'superdilithium' {
 			valid: boolean;
 		}>;
 	}
-
-	const superDilithium: ISuperDilithium;
 }
