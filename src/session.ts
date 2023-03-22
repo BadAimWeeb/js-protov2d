@@ -18,12 +18,15 @@ export default interface ProtoV2dSession extends EventEmitter {
     emit(event: "close"): boolean;
 }
 
+type ConditionalSend<T extends (0 | 1)> = T extends 1 ? Promise<void> : T extends 0 ? void : never;
+
 export default class ProtoV2dSession extends EventEmitter {
     isClientSide: boolean;
 
     connectionID: string;
     qos1Buffer: [dupID: number, data: Uint8Array][] = [];
     qos1Accepted: Set<number> = new Set();
+    qos1ACKCallback: Map<number, () => void> = new Map();
     qos1Counter: number = 0;
 
     constructor(connectionID: string, clientSide: boolean) {
@@ -33,14 +36,17 @@ export default class ProtoV2dSession extends EventEmitter {
     }
 
     /** Send data to other side */
-    send(QoS: 0 | 1, data: Uint8Array): void {
+    send<T extends (0 | 1)>(QoS: T, data: Uint8Array): ConditionalSend<T> {
         if (QoS === 1) {
             let dupID = (this.qos1Counter++ << 1) | (this.isClientSide ? 0 : 1);
             let isListening = this.emit("data_ret", QoS, data, dupID);
 
             if (!isListening) {
-                this.qos1Buffer.push([dupID, data]);
-                this.emit("qos1:queued", dupID);
+                return new Promise<void>((resolve) => {
+                    this.qos1Buffer.push([dupID, data]);
+                    this.emit("qos1:queued", dupID);
+                    this.qos1ACKCallback.set(dupID, resolve);
+                }) as ConditionalSend<T>;
             }
         } else {
             this.emit("data_ret", QoS, data);
