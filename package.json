@@ -1,6 +1,6 @@
 {
   "name": "@badaimweeb/js-protov2d",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "libp2p-less/hardlinked variant of ProtoV2",
   "main": "dist/index.js",
   "scripts": {

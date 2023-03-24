@@ -198,9 +198,8 @@ export function connect(config: ClientConfig, reconnectionData?: {
 
                             case 6: {
                                 handshaked = true;
-                                resolve(sessionInstance);
 
-                                ws.on("close", function a() {
+                                ws.addEventListener("close", function a() {
                                     ws.removeAllListeners();
                                     sessionInstance.removeListener("data_ret", handleDataSend);
                                     sessionInstance.removeListener("qos1:queued", handleDataRequeue);
@@ -266,6 +265,8 @@ export function connect(config: ClientConfig, reconnectionData?: {
                                 // Send all queued data
                                 handleDataRequeue();
                                 sessionInstance.on("qos1:queued", handleDataRequeue);
+
+                                resolve(sessionInstance);
                                 break;
                             }
 
@@ -323,7 +324,9 @@ export function connect(config: ClientConfig, reconnectionData?: {
                         }
                     }
                 }
-            } catch { }
+            } catch (e) { 
+                console.error(e);
+            }
         });
     });
 }
