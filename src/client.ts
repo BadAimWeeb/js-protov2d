@@ -200,7 +200,6 @@ export function connect(config: ClientConfig, reconnectionData?: {
                                 handshaked = true;
 
                                 ws.addEventListener("close", function a() {
-                                    ws.removeAllListeners();
                                     sessionInstance.removeListener("data_ret", handleDataSend);
                                     sessionInstance.removeListener("qos1:queued", handleDataRequeue);
 
