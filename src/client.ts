@@ -1,5 +1,4 @@
-import pkg0 from "isomorphic-ws";
-const { WebSocket } = pkg0;
+import WebSocket from "isomorphic-ws";
 
 import { Buffer } from "buffer";
 import { encode, decode } from "msgpack-lite";
