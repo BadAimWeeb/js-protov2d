@@ -40,19 +40,19 @@ export function connect(config: ClientConfig, reconnectionData?: {
         let sessionID: Uint8Array;
         let sessionInstance: ProtoV2dSession;
 
-        if (reconnectionData) {
-            sessionKey = reconnectionData.sessionKey;
-            sessionID = reconnectionData.sessionID;
-            sessionInstance = reconnectionData.sessionInstance;
-        } else {
-            let keyPair = await superDilithium.keyPair();
-            sessionKey = keyPair.privateKey;
-            sessionID = keyPair.publicKey;
+        ws.addEventListener("open", async () => {
+            if (reconnectionData) {
+                sessionKey = reconnectionData.sessionKey;
+                sessionID = reconnectionData.sessionID;
+                sessionInstance = reconnectionData.sessionInstance;
+            } else {
+                let keyPair = await superDilithium.keyPair();
+                sessionKey = keyPair.privateKey;
+                sessionID = keyPair.publicKey;
+    
+                sessionInstance = new ProtoV2dSession(Array.from(sessionID).map(x => x.toString(16).padStart(2, "0")).join(""), true);
+            }
 
-            sessionInstance = new ProtoV2dSession(Array.from(sessionID).map(x => x.toString(16).padStart(2, "0")).join(""), true);
-        }
-
-        ws.addEventListener("open", () => {
             ws.send(Uint8Array.from([0x02, 0x92, 0x01, 0x01]));
         });
 
@@ -66,6 +66,8 @@ export function connect(config: ClientConfig, reconnectionData?: {
                     d = new Uint8Array(data.data);
                 } else if (data.data instanceof Buffer) {
                     d = Uint8Array.from(data.data);
+                } else if (data.data instanceof Blob) {
+                    d = new Uint8Array(await data.data.arrayBuffer());
                 } else {
                     console.error(data);
                     throw new Error("Buffer[] Not implemented");
