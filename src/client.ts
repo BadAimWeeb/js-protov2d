@@ -53,7 +53,7 @@ export function connect(config: ClientConfig, reconnectionData?: {
         }
 
         ws.addEventListener("open", () => {
-            ws.send([0x02, 0x92, 0x01, 0x01]);
+            ws.send(Uint8Array.from([0x02, 0x92, 0x01, 0x01]));
         });
 
         ws.addEventListener("message", async data => {
@@ -61,7 +61,7 @@ export function connect(config: ClientConfig, reconnectionData?: {
             try {
                 let d: Uint8Array;
                 if (typeof data.data === "string") {
-                    d = Uint8Array.from(Buffer.from(data.data));
+                    d = Uint8Array.from(Buffer.from(data.data, "utf-8"));
                 } else if (data.data instanceof ArrayBuffer) {
                     d = new Uint8Array(data.data);
                 } else if (data.data instanceof Buffer) {
@@ -150,7 +150,7 @@ export function connect(config: ClientConfig, reconnectionData?: {
                                 encryptionKey = await SubtleCrypto.importKey("raw", key.secret, "AES-GCM", false, ["encrypt", "decrypt"]);
 
                                 // Sending key
-                                ws.send([0x02].concat(Array.from(encode([3, cipherString]))));
+                                ws.send(Uint8Array.from([0x02].concat(Array.from(encode([3, cipherString])))));
 
                                 break;
                             }
@@ -183,7 +183,7 @@ export function connect(config: ClientConfig, reconnectionData?: {
                                 );
 
                                 // Send encrypted data
-                                ws.send([0x02].concat(Array.from(iv), Array.from(encryptedData)));
+                                ws.send(Uint8Array.from([0x02].concat(Array.from(iv), Array.from(encryptedData))));
                                 break;
                             }
 
@@ -244,11 +244,11 @@ export function connect(config: ClientConfig, reconnectionData?: {
                                             iv: iv
                                         }, encryptionKey, constructedData);
 
-                                        ws.send([
+                                        ws.send(Uint8Array.from([
                                             0x03,
                                             ...iv,
                                             ...new Uint8Array(encrypted)
-                                        ]);
+                                        ]));
                                     }
                                 }
 
