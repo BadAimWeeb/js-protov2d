@@ -52,20 +52,20 @@ export function connect(config: ClientConfig, reconnectionData?: {
             sessionInstance = new ProtoV2dSession(Array.from(sessionID).map(x => x.toString(16).padStart(2, "0")).join(""), true);
         }
 
-        ws.on("open", () => {
+        ws.addEventListener("open", () => {
             ws.send([0x02, 0x92, 0x01, 0x01]);
         });
 
-        ws.on("message", async data => {
+        ws.addEventListener("message", async data => {
             //console.log("S-[C]", data);
             try {
                 let d: Uint8Array;
-                if (typeof data === "string") {
-                    d = Uint8Array.from(Buffer.from(data));
-                } else if (data instanceof ArrayBuffer) {
-                    d = new Uint8Array(data);
-                } else if (data instanceof Buffer) {
-                    d = Uint8Array.from(data);
+                if (typeof data.data === "string") {
+                    d = Uint8Array.from(Buffer.from(data.data));
+                } else if (data.data instanceof ArrayBuffer) {
+                    d = new Uint8Array(data.data);
+                } else if (data.data instanceof Buffer) {
+                    d = Uint8Array.from(data.data);
                 } else {
                     console.error(data);
                     throw new Error("Buffer[] Not implemented");
