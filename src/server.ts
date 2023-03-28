@@ -18,6 +18,7 @@ export interface ServerConfig {
     port: number;
     privateKey: string;
     publicKey: string;
+    streamTimeout: number;
 }
 
 export interface ProtoV2dServer extends EventEmitter {
@@ -41,11 +42,16 @@ export class ProtoV2dServer extends EventEmitter {
     }
 
     private onConnection(client: ws.WebSocket) {
+        let pingResponse = new Map<number, () => void>();
         let handshaked = false;
         let randomVerifyString = "";
         let asymmKey: { privateKey: Uint8Array, publicKey: Uint8Array } | null = null;
         let encryptionKey: CryptoKey | null = null;
         let oConnection: ProtoV2dSession | null = null;
+
+        if (oConnection) {
+            if (oConnection.closed) throw new Error("Attempting to reuse closed stream object");
+        }
 
         client.on("message", async (data: ws.Data) => {
             //console.log("C-[S]", data);
@@ -63,7 +69,7 @@ export class ProtoV2dServer extends EventEmitter {
                 }
 
                 let ch = d[0];
-                let dd = await (encryptionKey ? (async () => {
+                let dd = (ch === 0x02 || ch === 0x03) ? (await (encryptionKey ? (async () => {
                     // First 16 bytes are the IV, excluding the first byte
                     let iv = d.slice(1, 17);
 
@@ -80,12 +86,17 @@ export class ProtoV2dServer extends EventEmitter {
 
                     // Decode the data
                     return d[0] === 0x03 ? new Uint8Array(decryptedData) : decode(new Uint8Array(decryptedData));
-                })() : decode(d.slice(1)));
+                })() : decode(d.slice(1)))) : d.slice(1);
 
                 switch (ch) {
                     case 0x02: {
                         if (handshaked) {
                             client.terminate();
+                            if (oConnection) {
+                                oConnection.closed = true;
+                                oConnection.removeAllListeners("data_ret");
+                                oConnection.emit("closed");
+                            }
                             throw new Error("Handshake already done");
                         }
 
@@ -113,6 +124,11 @@ export class ProtoV2dServer extends EventEmitter {
 
                             case 2: {
                                 client.terminate();
+                                if (oConnection) {
+                                    oConnection.closed = true;
+                                    oConnection.removeAllListeners("data_ret");
+                                    oConnection.emit("closed");
+                                }
                                 break;
                             }
 
@@ -143,6 +159,11 @@ export class ProtoV2dServer extends EventEmitter {
 
                             case 4: {
                                 client.terminate();
+                                if (oConnection) {
+                                    oConnection.closed = true;
+                                    oConnection.removeAllListeners("data_ret");
+                                    oConnection.emit("closed");
+                                }
                                 break;
                             }
 
@@ -229,6 +250,16 @@ export class ProtoV2dServer extends EventEmitter {
                                     handleDataRequeue();
                                     oConnection.on("qos1:queued", handleDataRequeue);
 
+                                    oConnection.on("close_this", () => {
+                                        oConnection.closed = true;
+                                        oConnection.removeAllListeners("data_ret");
+                                        oConnection.emit("closed");
+                                        if (client.OPEN) {
+                                            client.send([0x05]);
+                                            client.close();
+                                        }
+                                    });
+
                                     let iv = crypto.getRandomValues(new Uint8Array(16));
                                     let encryptedData = await SubtleCrypto.encrypt({
                                         name: "AES-GCM",
@@ -237,12 +268,67 @@ export class ProtoV2dServer extends EventEmitter {
 
                                     client.send([0x02].concat(Array.from(iv), Array.from(new Uint8Array(encryptedData))));
 
-                                    if (newSession)
+                                    if (newSession) {
                                         // Emit connection event
                                         this.emit("connection", oConnection);
+                                    } else {
+                                        oConnection.emit("connected");
+                                    }
+
+                                    let pingClock = setInterval(async () => {
+                                        if (client.OPEN) {
+                                            let noncePingArr = crypto.getRandomValues(new Uint8Array(4));
+                                            let noncePingNumber = (noncePingArr[0] << 24) | (noncePingArr[1] << 16) | (noncePingArr[2] << 8) | noncePingArr[3];
+                                            try {
+                                                await new Promise<void>((resolve, reject) => {
+                                                    pingResponse.set(noncePingNumber, () => {
+                                                        pingResponse.delete(noncePingNumber);
+                                                        resolve();
+                                                    });
+                                                    setTimeout(() => {
+                                                        pingResponse.delete(noncePingNumber);
+                                                        reject();
+                                                    }, 25000);
+
+                                                    if (client.OPEN) {
+                                                        client.send(Uint8Array.from([0x04, 0x00, ...noncePingArr]));
+                                                    } else {
+                                                        reject();
+                                                    }
+                                                });
+                                            } catch {
+                                                // Terminate but not closing underlying data stream
+                                                client.terminate();
+                                                if (oConnection) {
+                                                    oConnection.removeListener("data_ret", handleDataSend);
+                                                    oConnection.emit("disconnected");
+                                                }
+
+                                                clearInterval(pingClock);
+
+                                                // Wait for specified time, if no reconnection is attempted, close data stream.
+                                                setTimeout(() => {
+                                                    if (oConnection) {
+                                                        if (!oConnection.listenerCount("data_ret")) {
+                                                            oConnection.closed = true;
+                                                            oConnection.removeAllListeners("data_ret");
+                                                            oConnection.emit("closed");
+                                                        }
+                                                    }
+                                                }, this.config.streamTimeout ?? 120000);
+                                            }
+                                        } else {
+                                            clearInterval(pingClock);
+                                        }
+                                    }, 30000);
                                 } else {
                                     // Invalid session ID
                                     client.terminate();
+                                    if (oConnection) {
+                                        oConnection.closed = true;
+                                        oConnection.removeAllListeners("data_ret");
+                                        oConnection.emit("closed");
+                                    }
                                 }
                             }
                         }
@@ -291,6 +377,26 @@ export class ProtoV2dServer extends EventEmitter {
                             let packetData = dd.slice(1);
                             oConnection.emit("data", 0, packetData);
                         }
+                        break;
+                    }
+
+                    case 0x04: {
+                        if (dd[0] === 0x00) {
+                            client.send(Uint8Array.from([0x04, 0x01, dd[1], dd[2], dd[3], dd[4]]));
+                        } else if (dd[0] === 0x01) {
+                            let noncePingNumber = (dd[1] << 24) | (dd[2] << 16) | (dd[3] << 8) | dd[4];
+                            pingResponse.get(noncePingNumber)?.();
+                        }
+                        break;
+                    }
+
+                    case 0x05: {
+                        // Handle close
+                        client.terminate();
+                        oConnection.closed = true;
+                        oConnection.removeAllListeners("data_ret");
+                        oConnection.emit("closed");
+                        break;
                     }
                 }
             } catch (e) {

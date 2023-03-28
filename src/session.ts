@@ -14,24 +14,43 @@ export default interface ProtoV2dSession extends EventEmitter {
     emit(event: "qos1:queued", dupID: number): boolean;
 
     /** Close */
-    on(event: "close", listener: () => void): this;
-    emit(event: "close"): boolean;
+    on(event: "closed", listener: () => void): this;
+    emit(event: "closed"): boolean;
+
+    on(event: "close_this", listener: () => void): this;
+    emit(event: "close_this"): boolean;
+
+    /** Signal */
+    on(event: "disconnected", listener: () => void): this;
+    emit(event: "disconnected"): boolean;
+
+    on(event: "connected", listener: () => void): this;
+    emit(event: "connected"): boolean;
+
+    on(event: "resumeFailed", listener: (newStream: ProtoV2dSession) => void): this;
+    emit(event: "resumeFailed", newStream: ProtoV2dSession): boolean;
 }
 
 type ConditionalSend<T extends (0 | 1)> = T extends 1 ? Promise<void> : T extends 0 ? void : never;
 
 export default class ProtoV2dSession extends EventEmitter {
+    closed = false;
+
+    get connected() {
+        return this.listenerCount("data_ret")
+    }
+
     isClientSide: boolean;
 
-    connectionID: string;
+    connectionPK: string;
     qos1Buffer: [dupID: number, data: Uint8Array][] = [];
     qos1Accepted: Set<number> = new Set();
     qos1ACKCallback: Map<number, () => void> = new Map();
     qos1Counter: number = 0;
 
-    constructor(connectionID: string, clientSide: boolean) {
+    constructor(connectionPK: string, clientSide: boolean) {
         super();
-        this.connectionID = connectionID;
+        this.connectionPK = connectionPK;
         this.isClientSide = clientSide;
     }
 
@@ -47,9 +66,19 @@ export default class ProtoV2dSession extends EventEmitter {
                     this.emit("qos1:queued", dupID);
                     this.qos1ACKCallback.set(dupID, resolve);
                 }) as ConditionalSend<T>;
+            } else {
+                return new Promise<void>((resolve) => {
+                    this.qos1ACKCallback.set(dupID, resolve);
+                }) as ConditionalSend<T>;
             }
         } else {
             this.emit("data_ret", QoS, data);
         }
+    }
+
+    close() {
+        this.closed = true;
+        this.emit("closed");
+        this.emit("close_this");
     }
 }

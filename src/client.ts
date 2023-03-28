@@ -21,7 +21,8 @@ export interface ClientConfig {
     } | {
         type: "hash",
         hash: string
-    }
+    },
+    timeout?: number
 }
 
 export function connect(config: ClientConfig, reconnectionData?: {
@@ -40,6 +41,27 @@ export function connect(config: ClientConfig, reconnectionData?: {
         let sessionID: Uint8Array;
         let sessionInstance: ProtoV2dSession;
 
+        let pingResponse = new Map<number, () => void>();
+        setTimeout(() => {
+            if (!handshaked) {
+                reject(new Error("Handshake timeout"));
+                closed = true;
+                ws.close();
+            }
+        }, config.timeout || 10000);
+
+        ws.addEventListener("close", () => {
+            if (!closed) {
+                reject(new Error("Connection closed"));
+            }
+        });
+
+        ws.addEventListener("error", err => {
+            if (!closed || !handshaked) {
+                reject(err);
+            }
+        });
+
         ws.addEventListener("open", async () => {
             if (reconnectionData) {
                 sessionKey = reconnectionData.sessionKey;
@@ -49,7 +71,7 @@ export function connect(config: ClientConfig, reconnectionData?: {
                 let keyPair = await superDilithium.keyPair();
                 sessionKey = keyPair.privateKey;
                 sessionID = keyPair.publicKey;
-    
+
                 sessionInstance = new ProtoV2dSession(Array.from(sessionID).map(x => x.toString(16).padStart(2, "0")).join(""), true);
             }
 
@@ -74,7 +96,7 @@ export function connect(config: ClientConfig, reconnectionData?: {
                 }
 
                 let ch = d[0];
-                let dd = await (encryptionKey ? (async () => {
+                let dd = (ch === 0x02 || ch === 0x03) ? await (encryptionKey ? (async () => {
                     // First 16 bytes are the IV, excluding the first byte
                     let iv = d.slice(1, 17);
 
@@ -91,12 +113,18 @@ export function connect(config: ClientConfig, reconnectionData?: {
 
                     // Decode the data
                     return d[0] === 0x03 ? new Uint8Array(decryptedData) : decode(new Uint8Array(decryptedData));
-                })() : decode(d.slice(1)));
+                })() : decode(d.slice(1))) : d.slice(1);
 
                 switch (ch) {
                     case 0x02: {
                         if (handshaked) {
-                            ws.terminate();
+                            ws.close();
+                            if (sessionInstance) {
+                                closed = true;
+                                sessionInstance.closed = true;
+                                sessionInstance.removeAllListeners("data_ret");
+                                sessionInstance.emit("closed");
+                            }
                             throw new Error("Handshake already done");
                         }
 
@@ -104,7 +132,13 @@ export function connect(config: ClientConfig, reconnectionData?: {
                         switch (hsID) {
                             case 1: {
                                 // not server, rejecting
-                                ws.terminate();
+                                ws.close();
+                                if (sessionInstance) {
+                                    closed = true;
+                                    sessionInstance.closed = true;
+                                    sessionInstance.removeAllListeners("data_ret");
+                                    sessionInstance.emit("closed");
+                                }
                                 reject(new Error("Invalid handshake: Server OP received"));
                                 return;
                             }
@@ -123,13 +157,25 @@ export function connect(config: ClientConfig, reconnectionData?: {
                                 // Comparing key
                                 if (config.publicKey.type === "key") {
                                     if (rootPK !== config.publicKey.key) {
-                                        ws.terminate();
+                                        ws.close();
+                                        if (sessionInstance) {
+                                            closed = true;
+                                            sessionInstance.closed = true;
+                                            sessionInstance.removeAllListeners("data_ret");
+                                            sessionInstance.emit("closed");
+                                        }
                                         reject(new Error("Invalid handshake: Server key mismatch"));
                                         return;
                                     }
                                 } else if (config.publicKey.type === "hash") {
                                     if (rootPKHash !== config.publicKey.hash) {
-                                        ws.terminate();
+                                        ws.close();
+                                        if (sessionInstance) {
+                                            closed = true;
+                                            sessionInstance.closed = true;
+                                            sessionInstance.removeAllListeners("data_ret");
+                                            sessionInstance.emit("closed");
+                                        }
                                         reject(new Error("Invalid handshake: Server key mismatch"));
                                         return;
                                     }
@@ -141,7 +187,13 @@ export function connect(config: ClientConfig, reconnectionData?: {
 
                                 // Verifying signature
                                 if (await superDilithium.verifyDetached(signatureArray, newPKArray, rootPKArray) === false) {
-                                    ws.terminate();
+                                    ws.close();
+                                    if (sessionInstance) {
+                                        closed = true;
+                                        sessionInstance.closed = true;
+                                        sessionInstance.removeAllListeners("data_ret");
+                                        sessionInstance.emit("closed");
+                                    }
                                     reject(new Error("Invalid handshake: Invalid server signature"));
                                     return;
                                 }
@@ -159,7 +211,13 @@ export function connect(config: ClientConfig, reconnectionData?: {
 
                             case 3: {
                                 // not server, rejecting
-                                ws.terminate();
+                                ws.close();
+                                if (sessionInstance) {
+                                    closed = true;
+                                    sessionInstance.closed = true;
+                                    sessionInstance.removeAllListeners("data_ret");
+                                    sessionInstance.emit("closed");
+                                }
                                 reject(new Error("Invalid handshake: Server OP received"));
                                 return;
                             }
@@ -191,7 +249,13 @@ export function connect(config: ClientConfig, reconnectionData?: {
 
                             case 5: {
                                 // not server, rejecting
-                                ws.terminate();
+                                ws.close();
+                                if (sessionInstance) {
+                                    closed = true;
+                                    sessionInstance.closed = true;
+                                    sessionInstance.removeAllListeners("data_ret");
+                                    sessionInstance.emit("closed");
+                                }
                                 reject(new Error("Invalid handshake: Server OP received"));
                                 return;
                             }
@@ -199,18 +263,44 @@ export function connect(config: ClientConfig, reconnectionData?: {
                             case 6: {
                                 handshaked = true;
 
+                                if (dd[1] === true) {
+                                    if (reconnectionData) {
+                                        // cannot resume from old session
+                                        let newSessionInstance = new ProtoV2dSession(Array.from(sessionID).map(x => x.toString(16).padStart(2, "0")).join(""), true);
+                                        sessionInstance.emit("resumeFailed", newSessionInstance);
+                                        sessionInstance = newSessionInstance;
+                                    }
+                                } else {
+                                    if (reconnectionData) {
+                                        sessionInstance.emit("connected");
+                                    }
+                                }
+
                                 ws.addEventListener("close", function a() {
                                     sessionInstance.removeListener("data_ret", handleDataSend);
                                     sessionInstance.removeListener("qos1:queued", handleDataRequeue);
+                                    sessionInstance.emit("disconnected");
 
                                     // reconnect
-                                    connect(config, {
-                                        sessionKey: sessionKey,
-                                        sessionID: sessionID,
-                                        sessionInstance: sessionInstance
-                                    }).catch(() => {
-                                        setTimeout(a, 5000);
-                                    });
+                                    if (!sessionInstance.closed)
+                                        connect(config, {
+                                            sessionKey: sessionKey,
+                                            sessionID: sessionID,
+                                            sessionInstance: sessionInstance
+                                        }).catch(() => {
+                                            setTimeout(a, 5000);
+                                        });
+                                });
+
+                                sessionInstance.on("close_this", () => {
+                                    closed = true;
+                                    sessionInstance.closed = true;
+                                    sessionInstance.removeAllListeners("data_ret");
+                                    sessionInstance.emit("closed");
+                                    if (ws.OPEN) {
+                                        ws.send([0x05]);
+                                        ws.close();
+                                    }
                                 });
 
                                 async function handleDataSend(qos: number, data: Uint8Array, dupID?: number) {
@@ -265,12 +355,52 @@ export function connect(config: ClientConfig, reconnectionData?: {
                                 handleDataRequeue();
                                 sessionInstance.on("qos1:queued", handleDataRequeue);
 
+                                // Delayed ping clock
+                                setTimeout(() => {
+                                    let pingClock = setInterval(async () => {
+                                        if (ws.OPEN) {
+                                            let noncePingArr = crypto.getRandomValues(new Uint8Array(4));
+                                            let noncePingNumber = (noncePingArr[0] << 24) | (noncePingArr[1] << 16) | (noncePingArr[2] << 8) | noncePingArr[3];
+                                            try {
+                                                await new Promise<void>((resolve, reject) => {
+                                                    pingResponse.set(noncePingNumber, () => {
+                                                        pingResponse.delete(noncePingNumber);
+                                                        resolve();
+                                                    });
+                                                    setTimeout(() => {
+                                                        pingResponse.delete(noncePingNumber);
+                                                        reject();
+                                                    }, 25000);
+
+                                                    if (ws.OPEN) {
+                                                        ws.send(Uint8Array.from([0x04, 0x00, ...noncePingArr]));
+                                                    } else {
+                                                        reject();
+                                                    }
+                                                });
+                                            } catch {
+                                                // Terminate but not closing underlying data stream
+                                                ws.close();
+                                                clearInterval(pingClock);
+                                            }
+                                        } else {
+                                            clearInterval(pingClock);
+                                        }
+                                    }, 30000);
+                                }, 15000);
+
                                 resolve(sessionInstance);
                                 break;
                             }
 
                             default: {
-                                ws.terminate();
+                                ws.close();
+                                if (sessionInstance) {
+                                    closed = true;
+                                    sessionInstance.closed = true;
+                                    sessionInstance.removeAllListeners("data_ret");
+                                    sessionInstance.emit("closed");
+                                }
                                 reject(new Error("Invalid handshake: Unknown OP"));
                                 return;
                             }
@@ -321,9 +451,32 @@ export function connect(config: ClientConfig, reconnectionData?: {
                             let packetData = dd.slice(1);
                             sessionInstance.emit("data", 0, packetData);
                         }
+                        break;
+                    }
+
+                    case 0x04: {
+                        if (dd[0] === 0x00) {
+                            ws.send(Uint8Array.from([0x04, 0x01, dd[1], dd[2], dd[3], dd[4]]));
+                        } else if (dd[0] === 0x01) {
+                            let noncePingNumber = (dd[1] << 24) | (dd[2] << 16) | (dd[3] << 8) | dd[4];
+                            pingResponse.get(noncePingNumber)?.();
+                        }
+                        break;
+                    }
+
+                    case 0x05: {
+                        // Handle close
+                        ws.close();
+                        if (sessionInstance) {
+                            closed = true;
+                            sessionInstance.closed = true;
+                            sessionInstance.removeAllListeners("data_ret");
+                            sessionInstance.emit("closed");
+                        }
+                        break;
                     }
                 }
-            } catch (e) { 
+            } catch (e) {
                 console.error(e);
             }
         });
