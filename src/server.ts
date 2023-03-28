@@ -18,7 +18,7 @@ export interface ServerConfig {
     port: number;
     privateKey: string;
     publicKey: string;
-    streamTimeout: number;
+    streamTimeout?: number;
 }
 
 export interface ProtoV2dServer extends EventEmitter {

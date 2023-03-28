@@ -5,7 +5,10 @@
         "moduleResolution": "Node",
         "outDir": "dist",
         "allowSyntheticDefaultImports": true,
-        "declaration": true
+        "declaration": true,
+        "paths": {
+            "superdilithium": ["./src/typepatch.d.ts"]
+        }
     },
     "include": ["src/**/*"],
     "exclude": ["node_modules", "**/*.spec.ts"]
