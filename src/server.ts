@@ -198,6 +198,7 @@ export class ProtoV2dServer extends EventEmitter {
                                         client.removeAllListeners();
                                         oConnection.removeListener("data_ret", handleDataSend);
                                         oConnection.removeListener("qos1:queued", handleDataRequeue);
+                                        oConnection.emit("disconnected");
                                     });
 
                                     async function handleDataSend(qos: number, data: Uint8Array, dupID?: number) {
@@ -243,14 +244,7 @@ export class ProtoV2dServer extends EventEmitter {
                                         }
                                     }
 
-                                    // Hook up the connection
-                                    oConnection.on("data_ret", handleDataSend);
-
-                                    // Send all queued data
-                                    handleDataRequeue();
-                                    oConnection.on("qos1:queued", handleDataRequeue);
-
-                                    oConnection.on("close_this", () => {
+                                    function handleCloseThis() {
                                         oConnection.closed = true;
                                         oConnection.removeAllListeners("data_ret");
                                         oConnection.emit("closed");
@@ -258,7 +252,16 @@ export class ProtoV2dServer extends EventEmitter {
                                             client.send([0x05]);
                                             client.close();
                                         }
-                                    });
+                                    }
+
+                                    // Hook up the connection
+                                    oConnection.on("data_ret", handleDataSend);
+
+                                    // Send all queued data
+                                    handleDataRequeue();
+                                    oConnection.on("qos1:queued", handleDataRequeue);
+
+                                    oConnection.on("close_this", handleCloseThis);
 
                                     let iv = crypto.getRandomValues(new Uint8Array(16));
                                     let encryptedData = await SubtleCrypto.encrypt({

@@ -279,6 +279,7 @@ export function connect(config: ClientConfig, reconnectionData?: {
                                 ws.addEventListener("close", function a() {
                                     sessionInstance.removeListener("data_ret", handleDataSend);
                                     sessionInstance.removeListener("qos1:queued", handleDataRequeue);
+                                    sessionInstance.removeListener("close_this", handleCloseThis);
                                     sessionInstance.emit("disconnected");
 
                                     // reconnect
@@ -292,7 +293,7 @@ export function connect(config: ClientConfig, reconnectionData?: {
                                         });
                                 });
 
-                                sessionInstance.on("close_this", () => {
+                                function handleCloseThis() {
                                     closed = true;
                                     sessionInstance.closed = true;
                                     sessionInstance.removeAllListeners("data_ret");
@@ -301,7 +302,9 @@ export function connect(config: ClientConfig, reconnectionData?: {
                                         ws.send([0x05]);
                                         ws.close();
                                     }
-                                });
+                                }
+
+                                sessionInstance.on("close_this", handleCloseThis);
 
                                 async function handleDataSend(qos: number, data: Uint8Array, dupID?: number) {
                                     let constructedData: Uint8Array;
