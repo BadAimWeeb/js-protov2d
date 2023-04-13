@@ -49,10 +49,6 @@ export class ProtoV2dServer extends EventEmitter {
         let encryptionKey: CryptoKey | null = null;
         let oConnection: ProtoV2dSession | null = null;
 
-        if (oConnection) {
-            if (oConnection.closed) throw new Error("Attempting to reuse closed stream object");
-        }
-
         client.on("message", async (data: ws.Data) => {
             //console.log("C-[S]", data);
             try {
@@ -186,6 +182,14 @@ export class ProtoV2dServer extends EventEmitter {
                                     if (this.sessions.has(dd[1])) {
                                         // Session exists, hook up existing session
                                         oConnection = this.sessions.get(dd[1])!;
+
+                                        if (oConnection.closed) {
+                                            // Session is closed, create new session
+                                            oConnection = new ProtoV2dSession(dd[1], false);
+                                            this.sessions.set(dd[1], oConnection);
+
+                                            newSession = true;
+                                        }
                                     } else {
                                         // Session doesn't exist, create new session
                                         oConnection = new ProtoV2dSession(dd[1], false);
@@ -349,6 +353,7 @@ export class ProtoV2dServer extends EventEmitter {
                             if (dd[5] === 0xFF) {
                                 // ACK packet
                                 oConnection.qos1Accepted.add(dupID);
+                                oConnection.qos1ACKCallback.get(dupID)?.();
                             } else {
                                 let packetData = dd.slice(6);
 

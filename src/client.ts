@@ -264,6 +264,7 @@ export function connect(config: ClientConfig, reconnectionData?: {
                                 handshaked = true;
 
                                 if (dd[1] === true) {
+                                    // new session in server
                                     if (reconnectionData) {
                                         // cannot resume from old session
                                         let newSessionInstance = new ProtoV2dSession(Array.from(sessionID).map(x => x.toString(16).padStart(2, "0")).join(""), true);
@@ -423,6 +424,7 @@ export function connect(config: ClientConfig, reconnectionData?: {
                             if (dd[5] === 0xFF) {
                                 // ACK packet
                                 sessionInstance.qos1Accepted.add(dupID);
+                                sessionInstance.qos1ACKCallback.get(dupID)?.();
                             } else {
                                 let packetData = dd.slice(6);
 
