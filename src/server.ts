@@ -1,3 +1,6 @@
+import type { Server as HTTPServer } from "http";
+import type { Server as HTTPSServer } from "https";
+
 import ws, { type AddressInfo } from "ws";
 import { EventEmitter } from "events";
 import { Buffer } from "buffer";
@@ -14,12 +17,14 @@ const SubtleCrypto = crypto.subtle;
 
 import ProtoV2dSession from "./session.js";
 
-export interface ServerConfig {
-    port: number;
+export type ServerConfig = {
     privateKey: string;
     publicKey: string;
     streamTimeout?: number;
-}
+} & (
+    { port: number } |
+    { server: HTTPServer | HTTPSServer }
+)
 
 export interface ProtoV2dServer extends EventEmitter {
     on(event: "connection", listener: (session: ProtoV2dSession) => void): this;
@@ -37,7 +42,11 @@ export class ProtoV2dServer extends EventEmitter {
 
     constructor(private config: ServerConfig) {
         super();
-        this.wsServer = new ws.Server({ port: config.port });
+        if ("server" in config) {
+            this.wsServer = new ws.Server({ server: config.server });
+        } else if ("port" in config) {
+            this.wsServer = new ws.Server({ port: config.port });
+        } else throw new Error("Invalid config");
         this.wsServer.on("connection", this.onConnection.bind(this));
     }
 

@@ -62,6 +62,33 @@ server.on("connection", session => {
 });
 ```
 
+Server usage (with external HTTP(S) server):
+```ts
+import { createServer as createHTTPServer } from "http";
+
+let httpServer = createHTTPServer();
+httpServer.listen(0);
+
+let server = new Server({
+    server: httpServer,
+    privateKey,
+    publicKey
+});
+```
+
+Server usage (with Express):
+```ts
+import express from "express";
+
+let app = express();
+
+let server = new Server({
+    server: app.listen(0),
+    privateKey,
+    publicKey
+});
+```
+
 Client usage:
 ```ts
 import { connect } from "@badaimweeb/js-protov2d";
