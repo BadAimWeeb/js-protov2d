@@ -195,6 +195,7 @@ export class ProtoV2dServer extends EventEmitter {
                                         if (oConnection.closed) {
                                             // Session is closed, create new session
                                             oConnection = new ProtoV2dSession(dd[1], false);
+                                            oConnection.rawWSSocket = client;
                                             this.sessions.set(dd[1], oConnection);
 
                                             newSession = true;
@@ -202,6 +203,7 @@ export class ProtoV2dServer extends EventEmitter {
                                     } else {
                                         // Session doesn't exist, create new session
                                         oConnection = new ProtoV2dSession(dd[1], false);
+                                        oConnection.rawWSSocket = client;
                                         this.sessions.set(dd[1], oConnection);
 
                                         newSession = true;

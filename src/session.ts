@@ -1,3 +1,4 @@
+import type { WebSocket } from "ws";
 import { EventEmitter } from "events";
 
 export default interface ProtoV2dSession extends EventEmitter {
@@ -47,6 +48,8 @@ export default class ProtoV2dSession extends EventEmitter {
     qos1Accepted: Set<number> = new Set();
     qos1ACKCallback: Map<number, () => void> = new Map();
     qos1Counter: number = 0;
+
+    rawWSSocket: WebSocket | null = null;
 
     constructor(connectionPK: string, clientSide: boolean) {
         super();
