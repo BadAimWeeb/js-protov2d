@@ -3,11 +3,6 @@ import WebSocket from "isomorphic-ws";
 import { Buffer } from "buffer";
 import { encode, decode } from "msgpack-lite";
 
-import pkg1 from "kyber-crystals";
-import pkg2 from "superdilithium";
-const { kyber } = pkg1;
-const { superDilithium } = pkg2;
-
 const SubtleCrypto = crypto.subtle;
 
 import ProtoV2dSession from "./session.js";

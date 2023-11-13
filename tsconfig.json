@@ -8,7 +8,8 @@
         "declaration": true,
         "paths": {
             "superdilithium": ["./src/typepatch.d.ts"]
-        }
+        },
+        "strict": true
     },
     "include": ["src/**/*"],
     "exclude": ["node_modules", "**/*.spec.ts"]

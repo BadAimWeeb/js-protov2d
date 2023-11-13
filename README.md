@@ -8,19 +8,13 @@ This package will expose a quantum-resistant encrypted tunnel, even when using u
 
 This package works best when used with [DTSocket](https://github.com/BadAimWeeb/js-dtsocket).
 
-```mermaid
-sequenceDiagram
-    Client->>Server: Request handshake
-    Server->>Client: Create new asymm key, signature and public root asymm key
-    Client->>Client: Compare public root asymm key with preshared key, and verify signature
-    Client->>Server: Send new encrypted AES symm key using new asymm key
-    Server->>Server: Decrypt AES symm key
-    Server->>Client: Send random challenge data encrypted with AES symm key
-    Client->>Server: Send session pubkey encrypted with AES symm key and signature of random challenge data using session privkey
-    Server->>Server: Verify signature and resume session (if found)
-    Server->>Client: Return if it's new session or not
-    Client-->Server: Encrypted tunnel established
-```
+## Note on using this package on non-secure contexts in browsers
+
+This package relies heavily on WebCrypto, and it will not available in non-secure contexts. If you want to use this in that case, please add polyfills for WebCrypto.
+
+You can polyfill WebCrypto by using [@peculiar/webcrypto](https://github.com/PeculiarVentures/webcrypto) (`crypto.webcrypto = webcryptoPolyfill`). Make sure to also polyfill node.js crypto ([browserify version](https://github.com/browserify/crypto-browserify)).
+
+## Usage
 
 Install:
 
