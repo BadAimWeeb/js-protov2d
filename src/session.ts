@@ -38,7 +38,7 @@ export default interface ProtoV2dSession extends EventEmitter {
  * 
  * Contains logic used after handshake.
  */
-export default class ProtoV2dSession extends EventEmitter {
+export default class ProtoV2dSession<BackendData = any> extends EventEmitter {
     closed = false;
 
     get connected() {
@@ -52,12 +52,12 @@ export default class ProtoV2dSession extends EventEmitter {
     private _qos1Counter: number = 0;
     private _pingClock: ReturnType<typeof setInterval> | null = null;
 
-    private _wc: WrappedConnection | null;
+    private _wc: WrappedConnection<BackendData> | null;
     get wc() {
         return this._wc;
     }
 
-    set wc(wc: WrappedConnection | null) {
+    set wc(wc: WrappedConnection<BackendData> | null) {
         if (this._wc) this._handleOldWC(this._wc);
         this.emit("wcChanged", this._wc, wc);
         this.emit("connected");
@@ -75,7 +75,7 @@ export default class ProtoV2dSession extends EventEmitter {
         this._encryption = key;
     }
 
-    constructor(public connectionPK: string, public protocolVersion: number, public clientSide: boolean, wc: WrappedConnection, encryption: CryptoKey[]) {
+    constructor(public connectionPK: string, public protocolVersion: number, public clientSide: boolean, wc: WrappedConnection<BackendData>, encryption: CryptoKey[]) {
         super();
         this._wc = wc;
         this._encryption = encryption;
@@ -102,6 +102,22 @@ export default class ProtoV2dSession extends EventEmitter {
     private _handleWC(wc: WrappedConnection) {
         wc.on("rx", this._bindHandleIncomingWCMessage);
         wc.on("close", this._bindHandleWCCloseEvent);
+
+        // Retry unsuccessful QoS1
+        for (let dupID of this._qos1Wait) {
+            (async () => {
+                if (!this._qos1Buffer.has(dupID)) return;
+
+                let originalResolve = this._qos1ACKCallback.get(dupID);
+                let data = this._qos1Buffer.get(dupID)! as Uint8Array;
+
+                try {
+                    await this.send(1, data, dupID);
+                    originalResolve?.();
+                } catch { }
+            })();
+        }
+
         this._pingClock = setInterval(async () => {
             if (!this.connected) return;
             let startPing = Date.now();

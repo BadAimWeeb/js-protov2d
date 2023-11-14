@@ -14,6 +14,8 @@ export interface WrappedConnection<BackendData> extends EventEmitter {
 
     /** Connection is closed. */
     on(event: "close", listener: () => void): this;
+    /** Connection is closed. */
+    once(event: "close", listener: () => void): this;
     /** Close connection. */
     emit(event: "close"): boolean;
 }

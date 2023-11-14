@@ -156,6 +156,8 @@ export class ProtoV2dServer extends EventEmitter {
 
     /** Pass existing WebSocket connection here. */
     public handleWSConnection(client: ws.WebSocket, header: IncomingMessage) {
+        client.binaryType = "arraybuffer";
+
         let realIP: ip.Address4 | ip.Address6 | null = null;
         let chainIP: string[] = [];
 
@@ -182,9 +184,9 @@ export class ProtoV2dServer extends EventEmitter {
                 rawPacket = textEncoder.encode(data);
             } else if (data instanceof ArrayBuffer) {
                 rawPacket = new Uint8Array(data);
-            } else if (data instanceof Buffer) {
+            } else if (data instanceof Buffer) { // these are redundant but just in case
                 rawPacket = Uint8Array.from(data);
-            } else {
+            } else { // these are redundant but just in case
                 // Fragments
                 rawPacket = data.map(x => Uint8Array.from(x)).reduce((a, b) => {
                     let c = new Uint8Array(a.length + b.length);
