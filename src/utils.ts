@@ -129,3 +129,17 @@ export function joinUint8Array(...rawArrays: (Uint8Array | number[])[]) {
 export function filterNull<T>(v: T | null | undefined): v is T {
     return v !== null && v !== undefined;
 }
+
+export function exactArray<T extends ArrayLike<any>>(a: T, b: T) {
+    if (a.length !== b.length) {
+        return false;
+    }
+
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) {
+            return false
+        }
+    }
+
+    return true;
+}

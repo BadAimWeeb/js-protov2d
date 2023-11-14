@@ -10,13 +10,14 @@ import debug from "debug";
 
 import { hexToUint8Array, Uint8ArrayToHex, randomString, proxyTrustResolver, aesDecrypt, joinUint8Array, filterNull, aesEncrypt } from "./utils.js";
 
-import Kyber, { type KEM as KyberKEM } from "@dashlane/pqc-kem-kyber1024-browser";
-import Dilithium5, { type SIGN as Dilithium5SIGN } from "@dashlane/pqc-sign-dilithium5-browser";
+import { type KEM as KyberKEM } from "@dashlane/pqc-kem-kyber1024-browser";
+import { type SIGN as Dilithium5SIGN } from "@dashlane/pqc-sign-dilithium5-browser";
 import { x25519, ed25519 } from "@noble/curves/ed25519";
 
 import ProtoV2dSession from "./session.js";
 import type { Duplex } from "stream";
 import { WrappedConnection } from "./connection.js";
+import { getDilithium5, getKyber } from "./pqcache.js";
 
 /**
  * This config allows you to choose 4 modes of upgrading connections:
@@ -40,10 +41,6 @@ export type ServerConfig = {
     trustProxy?: boolean | string[];
     allowDisableEncryption?: boolean;
     disableWASM?: boolean;
-    wasmCustomPath?: {
-        kyber1024?: string;
-        dilithium5?: string;
-    }
 } & (
         { port: number } |
         { server: HTTPServer | HTTPSServer } |
@@ -141,8 +138,8 @@ export class ProtoV2dServer extends EventEmitter {
 
         this.wsServer.on("connection", this.handleWSConnection.bind(this));
 
-        this.kyber = Kyber(config.disableWASM);
-        this.dilithium5 = Dilithium5(config.disableWASM);
+        this.kyber = getKyber(!!config.disableWASM);
+        this.dilithium5 = getDilithium5(!!config.disableWASM);
     }
 
     /** Pass upgrade request from HTTP here. */
