@@ -12,7 +12,7 @@ This package works best when used with [DTSocket](https://github.com/BadAimWeeb/
 
 This package relies heavily on WebCrypto, and it will not available in non-secure contexts. If you want to use this in that case, please add polyfills for WebCrypto.
 
-You can polyfill WebCrypto by using [@peculiar/webcrypto](https://github.com/PeculiarVentures/webcrypto) (`crypto.webcrypto = webcryptoPolyfill`). Make sure to also polyfill node.js crypto ([browserify version](https://github.com/browserify/crypto-browserify)).
+You can polyfill WebCrypto by using [@peculiar/webcrypto](https://github.com/PeculiarVentures/webcrypto) (`crypto.subtle = webcryptoPolyfill`). Make sure to also polyfill node.js crypto ([browserify version](https://github.com/browserify/crypto-browserify)).
 
 ## Usage
 

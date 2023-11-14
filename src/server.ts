@@ -8,7 +8,7 @@ import { encode, decode } from "msgpack-lite";
 import ip from "ip-address";
 import debug from "debug";
 
-import { hexToUint8Array, Uint8ArrayToHex, randomString, proxyTrustResolver, aesDecrypt, joinUint8Array, filterNull } from "./utils.js";
+import { hexToUint8Array, Uint8ArrayToHex, randomString, proxyTrustResolver, aesDecrypt, joinUint8Array, filterNull, aesEncrypt } from "./utils.js";
 
 import Kyber, { type KEM as KyberKEM } from "@dashlane/pqc-kem-kyber1024-browser";
 import Dilithium5, { type SIGN as Dilithium5SIGN } from "@dashlane/pqc-sign-dilithium5-browser";
@@ -52,10 +52,13 @@ export type ServerConfig = {
     )
 
 export interface ProtoV2dServer extends EventEmitter {
+    /** This event will return session from clients. */
     on(event: "connection", listener: (session: ProtoV2dSession) => void): this;
-    on(event: "ready", listener: () => void): this;
     emit(event: "connection", session: ProtoV2dSession): boolean;
-    emit(event: "ready"): boolean;
+
+    /** Dead/timed out session will be emitted here. */
+    on(event: "dropConnection", listener: (session: ProtoV2dSession) => void): this;
+    emit(event: "dropConnection", session: ProtoV2dSession): boolean;
 }
 
 export class ProtoV2dServer extends EventEmitter {
@@ -142,6 +145,7 @@ export class ProtoV2dServer extends EventEmitter {
         this.dilithium5 = Dilithium5(config.disableWASM);
     }
 
+    /** Pass upgrade request from HTTP here. */
     public handleWSUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
         if (!this.wsServer) throw new Error("Server not ready");
 
@@ -150,6 +154,7 @@ export class ProtoV2dServer extends EventEmitter {
         });
     }
 
+    /** Pass existing WebSocket connection here. */
     public handleWSConnection(client: ws.WebSocket, header: IncomingMessage) {
         let realIP: ip.Address4 | ip.Address6 | null = null;
         let chainIP: string[] = [];
@@ -202,6 +207,7 @@ export class ProtoV2dServer extends EventEmitter {
         });
     }
 
+    /** If you're using a custom protocol, receive data from proxy, etc..., construct WrappedConnection and pass data to "rx", send data from "tx". After that, put that object here. */
     public handleWrappedConnection(wc: WrappedConnection) {
         //#region State variables
         let state = {
@@ -212,8 +218,6 @@ export class ProtoV2dServer extends EventEmitter {
             challenge2: [] as number[],
             handshaked: false
         };
-
-        let pingResponse = new Map<number, () => void>();
 
         let asymmKeyPQ: { privateKey: Uint8Array, publicKey: Uint8Array } | null = null;
         let asymmKeyClassic: { privateKey: Uint8Array, publicKey: Uint8Array } | null = null;
@@ -321,6 +325,7 @@ export class ProtoV2dServer extends EventEmitter {
                             // Invalid state
                             closeConnection();
                         }
+                        return;
                     } else {
                         // Server does not support this handshake version
                         let mismatchedPacket = encode([2]);
@@ -332,14 +337,113 @@ export class ProtoV2dServer extends EventEmitter {
 
                 switch (state.version) {
                     case 1: {
-                        // TODO: Implement version 1
+                        if (!state.handshaked && rawPacket[0] !== 0x02) {
+                            // Invalid state
+                            closeConnection(); return;
+                        }
+
+                        switch (state.currentPacket) {
+                            case 1: {
+                                let enc = decode(rawPacket.slice(1)) as [3, string];
+                                if (enc[0] !== 3) {
+                                    // Invalid state
+                                    closeConnection(); return;
+                                }
+                                let cK = hexToUint8Array(enc[1]);
+
+                                let sharedSecret = await (await this.kyber).decapsulate(cK, asymmKeyPQ!.privateKey);
+                                encryptionKeyPQ = await crypto.subtle.importKey(
+                                    "raw",
+                                    sharedSecret.sharedSecret,
+                                    "AES-GCM",
+                                    true,
+                                    ["encrypt", "decrypt"]
+                                );
+
+                                state.challenge1 = randomString(64);
+                                let packet = encode([4, state.challenge1]);
+
+                                state.currentPacket = 2;
+
+                                let encryptedPacket = await aesEncrypt(packet, encryptionKeyPQ, false);
+                                wc.send(joinUint8Array([0x02], encryptedPacket));
+                                return;
+                            }
+
+                            case 2: {
+                                let enc = decode(await aesDecrypt(rawPacket.slice(1), encryptionKeyPQ!, false)) as [5, string, string];
+                                if (enc[0] !== 5) {
+                                    // Invalid state
+                                    closeConnection(); return;
+                                }
+
+                                // Verify session
+                                let sessionKey = hexToUint8Array(enc[1]);
+                                let signature = hexToUint8Array(enc[2]);
+
+                                let sessionClassic = sessionKey.slice(0, 32);
+                                let sessionPQ = sessionKey.slice(32);
+                                let signatureClassic = signature.slice(0, 64);
+                                let signaturePQ = signature.slice(64);
+
+                                let utf8 = new TextEncoder();
+                                let random = utf8.encode(state.challenge1);
+
+                                let verifiedClassic = ed25519.verify(signatureClassic, random, sessionClassic);
+                                if (!verifiedClassic) {
+                                    this.debug("invalid classic signature for session");
+                                    closeConnection();
+                                    return;
+                                }
+
+                                let verifiedPQ = await (await this.dilithium5).verify(signaturePQ, random, sessionPQ);
+                                if (!verifiedPQ) {
+                                    this.debug("invalid post-quantum signature for session");
+                                    closeConnection();
+                                    return;
+                                }
+
+                                // Passed signature verification
+                                state.currentPacket = 3;
+                                state.handshaked = true;
+
+                                // Create session
+                                let sessionID = Uint8ArrayToHex(sessionKey);
+                                if (this.sessions.has(sessionID) && !this.sessions.get(sessionID)!.closed) {
+                                    // Session already exists, resume
+                                    wc.send([0x04, 0x00]);
+
+                                    session = this.sessions.get(sessionID)!;
+                                    session.clientSide = false;
+                                    session.protocolVersion = 1;
+                                    session.wc = wc;
+                                    session.encryption = [encryptionKeyPQ!];
+                                } else {
+                                    // Session doesn't exist, create new
+                                    wc.send([0x04, 0x01]);
+
+                                    session = new ProtoV2dSession(sessionID, 2, false, wc, [encryptionKeyPQ!]);
+                                    this.sessions.set(sessionID, session);
+
+                                    // session lifecycle management
+                                    this._handleSessionLifecycle(session);
+
+                                    this.emit("connection", session);
+                                }
+
+                                // handshaked done, drop handshake handler.
+                                wc.removeListener("rx", handleIncomingPacket);
+
+                                return;
+                            }
+                        }
                         break;
                     }
 
                     case 2: {
                         if (!state.handshaked && rawPacket[0] !== 0x02) {
                             // Invalid state
-                            closeConnection();
+                            closeConnection(); return;
                         }
 
                         switch (state.currentPacket) {
@@ -434,8 +538,14 @@ export class ProtoV2dServer extends EventEmitter {
                                     session = new ProtoV2dSession(sessionID, 2, false, wc, [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull));
                                     this.sessions.set(sessionID, session);
 
+                                    // session lifecycle management
+                                    this._handleSessionLifecycle(session);
+
                                     this.emit("connection", session);
                                 }
+
+                                // handshaked done, drop handshake handler.
+                                wc.removeListener("rx", handleIncomingPacket);
                             }
                         }
                         break;
@@ -447,5 +557,28 @@ export class ProtoV2dServer extends EventEmitter {
         }
 
         wc.on("rx", handleIncomingPacket);
+    }
+
+    private _handleSessionLifecycle(session: ProtoV2dSession) {
+        if (this.config.streamTimeout) {
+            let timeout: ReturnType<typeof setTimeout>;
+            let reconnectHandler = () => {
+                clearTimeout(timeout);
+            }
+
+            let disconnectHandler = () => {
+                timeout = setTimeout(() => {
+                    session.close();
+                    session.removeListener("connected", reconnectHandler);
+                    session.removeListener("disconnected", disconnectHandler);
+                    this.emit("dropConnection", session);
+                    this.sessions.delete(session.connectionPK);
+                }, this.config.streamTimeout!);
+
+                session.once("connected", reconnectHandler);
+            }
+
+            session.on("disconnected", disconnectHandler);
+        }
     }
 }

@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import { WrappedConnection } from "./connection";
-import { joinUint8Array } from "./utils";
+import { aesDecrypt, aesEncrypt, joinUint8Array } from "./utils";
 
 export default interface ProtoV2dSession extends EventEmitter {
     /** Use this to receive data */
@@ -25,24 +25,32 @@ export default interface ProtoV2dSession extends EventEmitter {
     on(event: "resumeFailed", listener: (newStream: ProtoV2dSession) => void): this;
     emit(event: "resumeFailed", newStream: ProtoV2dSession): boolean;
 
-    on(event: "wcChanged", listener: (oldWC: WrappedConnection, newWC: WrappedConnection) => void): this;
+    on(event: "wcChanged", listener: (oldWC: WrappedConnection | null, newWC: WrappedConnection | null) => void): this;
     emit(event: "wcChanged", oldWC: WrappedConnection | null, newWC: WrappedConnection | null): boolean;
+
+    /** Ping */
+    on(event: "ping", listener: (ping: number) => void): this;
+    emit(event: "ping", ping: number): boolean;
 }
 
-type ConditionalSend<T extends (0 | 1)> = T extends 1 ? Promise<void> : T extends 0 ? undefined : never;
-
+/**
+ * The session object represents a ProtoV2d connection between client and server. It is the main way to receive and send data.
+ * 
+ * Contains logic used after handshake.
+ */
 export default class ProtoV2dSession extends EventEmitter {
     closed = false;
 
     get connected() {
-        return !(this.wc || {closed: true}).closed;
+        return !(this.wc || { closed: true }).closed;
     }
 
     //qos1Buffer: [dupID: number, data: Uint8Array][] = [];
-    qos1Buffer = new Map<number, Uint8Array | true>();
-    qos1Wait = new Set<number>();
-    qos1ACKCallback = new Map<number, () => void>();
-    qos1Counter: number = 0;
+    private _qos1Buffer = new Map<number, Uint8Array | true>();
+    private _qos1Wait = new Set<number>();
+    private _qos1ACKCallback = new Map<number, () => void>();
+    private _qos1Counter: number = 0;
+    private _pingClock: ReturnType<typeof setInterval> | null = null;
 
     private _wc: WrappedConnection | null;
     get wc() {
@@ -52,6 +60,7 @@ export default class ProtoV2dSession extends EventEmitter {
     set wc(wc: WrappedConnection | null) {
         if (this._wc) this._handleOldWC(this._wc);
         this.emit("wcChanged", this._wc, wc);
+        this.emit("connected");
         this._wc = wc;
         if (wc) this._handleWC(wc);
     }
@@ -73,19 +82,129 @@ export default class ProtoV2dSession extends EventEmitter {
         this._handleWC(wc);
     }
 
+    private async _decrypt(data: Uint8Array) {
+        let dKey: CryptoKey;
+        let dKeysCopy = this._encryption.slice();
+        while (dKey = dKeysCopy.pop()!) {
+            data = await aesDecrypt(data, dKey, this.protocolVersion !== 1);
+        }
+        return data;
+    }
+
+    private async _encrypt(data: Uint8Array) {
+        let eKey: CryptoKey;
+        while (eKey = this._encryption.shift()!) {
+            data = await aesEncrypt(data, eKey, this.protocolVersion !== 1);
+        }
+        return data;
+    }
+
     private _handleWC(wc: WrappedConnection) {
         wc.on("rx", this._bindHandleIncomingWCMessage);
         wc.on("close", this._bindHandleWCCloseEvent);
+        this._pingClock = setInterval(async () => {
+            if (!this.connected) return;
+            let startPing = Date.now();
+            let randomBytes = crypto.getRandomValues(new Uint8Array(16));
+            let resolvePromise: () => void, promise = new Promise<void>((resolve) => resolvePromise = resolve);
+            let handlePingPacket = (data: Uint8Array) => {
+                if (data[0] !== 0x04) return;
+                if (data[1] !== 0x01) return;
+                if (data.length !== 18) return;
+                // Compare random bytes
+                for (let i = 0; i < 16; i++) {
+                    if (data[i + 2] !== randomBytes[i]) return;
+                }
+                wc.removeListener("rx", handlePingPacket);
+                resolvePromise();
+            }
+            wc.on("rx", handlePingPacket);
+
+            // Ping packet
+            wc.send(joinUint8Array([0x04, 0x00], randomBytes));
+
+            // Wait for pong packet, if timed out in 10 seconds, then close connection
+            try {
+                await Promise.race([
+                    promise,
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 10000))
+                ]);
+
+                this._ping = Date.now() - startPing;
+                this.emit("ping", this._ping);
+            } catch {
+                wc.emit("close");
+            }
+        }, 15000);
     }
 
     private _handleOldWC(wc: WrappedConnection) {
         wc.removeListener("rx", this._bindHandleIncomingWCMessage);
         wc.removeListener("close", this._bindHandleWCCloseEvent);
+        if (this._pingClock) {
+            clearInterval(this._pingClock);
+            this._pingClock = null;
+        }
     }
 
     //#region Event stuff
-    private _handleIncomingWCMessage(data: Uint8Array) {
+    private async _handleIncomingWCMessage(data: Uint8Array) {
+        switch (data[0]) {
+            // Data 
+            case 0x03: {
+                let packet = await this._decrypt(data.slice(1));
 
+                let qos = packet[0];
+                switch (qos) {
+                    case 0x00: {
+                        this.emit("data", 0, packet.slice(1));
+                        break;
+                    }
+
+                    case 0x01: {
+                        let dupID = (packet[1] << 24) | (packet[2] << 16) | (packet[3] << 8) | packet[4];
+                        let control = packet[5];
+
+                        if (control === 0xFF) {
+                            if (!this._qos1Wait.has(dupID)) return;
+                            this._qos1ACKCallback.get(dupID)?.();
+                            this._qos1ACKCallback.delete(dupID);
+                        } else {
+                            let data = packet.slice(6);
+
+                            if (!this._qos1Buffer.has(dupID)) {
+                                this._qos1Buffer.set(dupID, true);
+                                this.emit("data", 1, data);
+                            }
+
+                            this._wc?.send(joinUint8Array([0x03], await this._encrypt(joinUint8Array([
+                                0x01,
+                                (dupID >> 24) & 0xFF,
+                                (dupID >> 16) & 0xFF,
+                                (dupID >> 8) & 0xFF,
+                                dupID & 0xFF,
+                                0xFF
+                            ]))));
+                        }
+                        break;
+                    }
+                }
+                return;
+            }
+
+            case 0x04: {
+                if (data[1] === 0x00) {
+                    this._wc?.send(joinUint8Array([0x04, 0x01], data.slice(2)));
+                }
+                return;
+            }
+
+            // Graceful close
+            case 0x05: {
+                this.close();
+                return;
+            }
+        }
     }
     private _bindHandleIncomingWCMessage = this._handleIncomingWCMessage.bind(this);
 
@@ -98,9 +217,13 @@ export default class ProtoV2dSession extends EventEmitter {
 
     /** Destroy object without destroying WC. All listener will be removed to make this object GC-able. WC pointer will also be null. */
     public destroy() {
+        if (this._wc) this.emit("wcChanged", this._wc, null);
         this._wc = null;
         if (!this.closed) this.emit("closed");
         this.closed = true;
+        this._qos1Buffer.clear();
+        this._qos1Wait.clear();
+        this._qos1ACKCallback.clear();
         this.removeAllListeners();
     }
 
@@ -108,39 +231,44 @@ export default class ProtoV2dSession extends EventEmitter {
     public close() {
         if (!this.closed) this.emit("closed");
         this.closed = true;
-        this.wc?.emit("close");
+        if (this._wc) {
+            this._wc.emit("close");
+            this.emit("wcChanged", this._wc, null);
+        }
         this._wc = null;
+        this._qos1Buffer.clear();
+        this._qos1Wait.clear();
+        this._qos1ACKCallback.clear();
         this.removeAllListeners();
     }
 
     /** Send data to other side */
-    public send<T extends (0 | 1)>(QoS: T, data: Uint8Array, overrideDupID?: number): ConditionalSend<T> {
+    public async send(QoS: 0 | 1, data: Uint8Array, overrideDupID?: number): Promise<void> {
+        if (!this.wc) throw new Error("No connection");
         if (QoS === 1) {
-            if (!this.wc) return Promise.reject(new Error("No connection")) as ConditionalSend<T>;
-
-            let dupID = overrideDupID ?? ((this.qos1Counter++ << 1) | (this.clientSide ? 0 : 1));
+            let dupID = overrideDupID ?? ((this._qos1Counter++ << 1) | (this.clientSide ? 0 : 1));
 
             return new Promise<void>(async (resolve) => {
-                this.qos1Buffer.set(dupID, data);
-                this.qos1Wait.add(dupID);
+                this._qos1Buffer.set(dupID, data);
+                this._qos1Wait.add(dupID);
 
                 try {
                     for (let retry = false; ; retry = true) {
                         if (!this.connected) throw "no";
 
-                        let packet = joinUint8Array([
+                        let packet = await this._encrypt(joinUint8Array([
                             0x01,
                             (dupID >> 24) & 0xFF,
                             (dupID >> 16) & 0xFF,
                             (dupID >> 8) & 0xFF,
                             dupID & 0xFF,
                             retry ? 0x01 : 0x00
-                        ], data);
+                        ], data));
 
-                        let pr: () => void, waitResolve = new Promise<void>((resolve) => pr = resolve);
-                        this.qos1ACKCallback.set(dupID, resolve);
+                        let pr = () => { }, waitResolve = new Promise<void>((resolve) => pr = resolve);
+                        this._qos1ACKCallback.set(dupID, pr);
 
-                        this.wc!.send(packet);
+                        this.wc!.send(joinUint8Array([0x03], packet));
 
                         try {
                             await Promise.race([
@@ -152,19 +280,15 @@ export default class ProtoV2dSession extends EventEmitter {
                         } catch { }
                     }
 
-                    this.qos1Wait.delete(dupID);
-                    this.qos1Buffer.set(dupID, true);
+                    this._qos1Wait.delete(dupID);
+                    this._qos1Buffer.set(dupID, true);
                     resolve();
                 } catch {
-                    this.qos1ACKCallback.set(dupID, resolve);
+                    this._qos1ACKCallback.set(dupID, resolve);
                 }
-            }) as ConditionalSend<T>;
+            });
         } else {
-            if (!this.wc) throw new Error("No connection");
-
-            this.wc.send(joinUint8Array([0x03], data));
-
-            return void 0 as ConditionalSend<T>;
+            this.wc.send(await this._encrypt(joinUint8Array([0x00], data)));
         }
     }
 }
