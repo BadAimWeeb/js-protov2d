@@ -75,7 +75,7 @@ export default class ProtoV2dSession<BackendData = any> extends EventEmitter {
         this._encryption = key;
     }
 
-    constructor(public connectionPK: string, public protocolVersion: number, public clientSide: boolean, wc: WrappedConnection<BackendData>, encryption: CryptoKey[]) {
+    constructor(public connectionPK: string, public protocolVersion: number, public clientSide: boolean, wc: WrappedConnection<BackendData>, encryption: CryptoKey[], public timeout = 10000) {
         super();
         this._wc = wc;
         this._encryption = encryption;
@@ -143,7 +143,7 @@ export default class ProtoV2dSession<BackendData = any> extends EventEmitter {
             try {
                 await Promise.race([
                     promise,
-                    new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 10000))
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), this.timeout))
                 ]);
 
                 this._ping = Date.now() - startPing;

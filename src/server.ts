@@ -38,6 +38,7 @@ export type ServerConfig = {
     privateKey: string | Uint8Array;
     publicKey: string | Uint8Array;
     streamTimeout?: number;
+    pingTimeout?: number;
     trustProxy?: boolean | string[];
     allowDisableEncryption?: boolean;
     disableWASM?: boolean;
@@ -421,7 +422,7 @@ export class ProtoV2dServer extends EventEmitter {
                                     // Session doesn't exist, create new
                                     wc.send([0x04, 0x01]);
 
-                                    session = new ProtoV2dSession(sessionID, 2, false, wc, [encryptionKeyPQ!]);
+                                    session = new ProtoV2dSession(sessionID, 2, false, wc, [encryptionKeyPQ!], this.config.pingTimeout || 10000);
                                     this.sessions.set(sessionID, session);
 
                                     // session lifecycle management
@@ -534,7 +535,7 @@ export class ProtoV2dServer extends EventEmitter {
                                     // Session doesn't exist, create new
                                     wc.send([0x04, 0x01]);
 
-                                    session = new ProtoV2dSession(sessionID, 2, false, wc, [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull));
+                                    session = new ProtoV2dSession(sessionID, 2, false, wc, [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull), this.config.pingTimeout || 10000);
                                     this.sessions.set(sessionID, session);
 
                                     // session lifecycle management

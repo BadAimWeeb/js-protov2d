@@ -320,7 +320,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             state.currentPacket = 4;
 
                             if (packet[1]) {
-                                let newSession = new ProtoV2dSession(Uint8ArrayToHex(sessionID), 1, true, wc, [encryptionKeyPQ!]);
+                                let newSession = new ProtoV2dSession(Uint8ArrayToHex(sessionID), 1, true, wc, [encryptionKeyPQ!], timeout);
                                 if (sessionObject) {
                                     sessionObject.emit("resumeFailed", newSession);
                                     sessionObject.close();
@@ -329,7 +329,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                                 sessionObject = newSession;
                             } else {
                                 if (!sessionObject) {
-                                    sessionObject = new ProtoV2dSession(Uint8ArrayToHex(sessionID), 1, true, wc, [encryptionKeyPQ!]);
+                                    sessionObject = new ProtoV2dSession(Uint8ArrayToHex(sessionID), 1, true, wc, [encryptionKeyPQ!], timeout);
                                 } else {
                                     sessionObject.protocolVersion = 1;
                                     sessionObject.encryption = [encryptionKeyPQ!];
