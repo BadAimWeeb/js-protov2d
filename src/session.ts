@@ -1,6 +1,9 @@
 import { EventEmitter } from "events";
 import { WrappedConnection } from "./connection";
-import { aesDecrypt, aesEncrypt, joinUint8Array } from "./utils";
+import { aesDecrypt, aesEncrypt, joinUint8Array } from "./utils.js";
+import debug from "debug";
+
+const log = debug("protov2d:session");
 
 export default interface ProtoV2dSession extends EventEmitter {
     /** Use this to receive data */
@@ -93,7 +96,8 @@ export default class ProtoV2dSession<BackendData = any> extends EventEmitter {
 
     private async _encrypt(data: Uint8Array) {
         let eKey: CryptoKey;
-        while (eKey = this._encryption.shift()!) {
+        let eKeysCopy = this._encryption.slice();
+        while (eKey = eKeysCopy.shift()!) {
             data = await aesEncrypt(data, eKey, this.protocolVersion !== 1);
         }
         return data;
@@ -149,7 +153,7 @@ export default class ProtoV2dSession<BackendData = any> extends EventEmitter {
                 this._ping = Date.now() - startPing;
                 this.emit("ping", this._ping);
             } catch {
-                wc.emit("close");
+                wc.emit("close", true);
             }
         }, 15000);
     }
@@ -173,6 +177,8 @@ export default class ProtoV2dSession<BackendData = any> extends EventEmitter {
                 let qos = packet[0];
                 switch (qos) {
                     case 0x00: {
+                        log(`incoming qos0 data`);
+
                         this.emit("data", 0, packet.slice(1));
                         break;
                     }
@@ -182,10 +188,14 @@ export default class ProtoV2dSession<BackendData = any> extends EventEmitter {
                         let control = packet[5];
 
                         if (control === 0xFF) {
+                            log(`incoming qos1 ack ${dupID}`);
+
                             if (!this._qos1Wait.has(dupID)) return;
                             this._qos1ACKCallback.get(dupID)?.();
                             this._qos1ACKCallback.delete(dupID);
                         } else {
+                            log(`incoming qos1 data ${dupID}`);
+
                             let data = packet.slice(6);
 
                             if (!this._qos1Buffer.has(dupID)) {
@@ -248,7 +258,7 @@ export default class ProtoV2dSession<BackendData = any> extends EventEmitter {
         if (!this.closed) this.emit("closed");
         this.closed = true;
         if (this._wc) {
-            this._wc.emit("close");
+            this._wc.emit("close", true);
             this.emit("wcChanged", this._wc, null);
         }
         this._wc = null;
@@ -293,7 +303,7 @@ export default class ProtoV2dSession<BackendData = any> extends EventEmitter {
                             ]);
 
                             break;
-                        } catch { }
+                        } catch {}
                     }
 
                     this._qos1Wait.delete(dupID);

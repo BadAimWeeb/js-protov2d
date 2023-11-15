@@ -6,10 +6,8 @@
         "outDir": "dist",
         "allowSyntheticDefaultImports": true,
         "declaration": true,
-        "paths": {
-            "superdilithium": ["./src/typepatch.d.ts"]
-        },
-        "strict": true
+        "strict": true,
+        "skipLibCheck": true
     },
     "include": ["src/**/*"],
     "exclude": ["node_modules", "**/*.spec.ts"]

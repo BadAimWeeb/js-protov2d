@@ -62,7 +62,7 @@ export interface ProtoV2dServer extends EventEmitter {
 export class ProtoV2dServer extends EventEmitter {
     private debug = debug("protov2d:server");
 
-    private wsServer: ws.Server;
+    public wsServer: ws.Server;
     private sessions: Map<string, ProtoV2dSession> = new Map();
     private trustProxy: boolean | (ip.Address4 | ip.Address6)[];
 
@@ -173,6 +173,8 @@ export class ProtoV2dServer extends EventEmitter {
         // Trust proxy
         realIP = proxyTrustResolver(chainIP, this.trustProxy);
 
+        this.debug("incoming connection from %s", realIP?.address ?? "unknown");
+
         let wrapped = new WrappedConnection(realIP, client);
         client.on("message", (data: ws.Data) => {
             let rawPacket: Uint8Array;
@@ -205,6 +207,8 @@ export class ProtoV2dServer extends EventEmitter {
             client.close();
             client.removeAllListeners();
         });
+
+        this.handleWrappedConnection(wrapped);
     }
 
     /** If you're using a custom protocol, receive data from proxy, etc..., construct WrappedConnection and pass data to "rx", send data from "tx". After that, put that object here. */
@@ -228,7 +232,7 @@ export class ProtoV2dServer extends EventEmitter {
         //#endregion
 
         let closeConnection = () => {
-            wc.emit("close");
+            wc.emit("close", false);
             wc.removeListener("rx", handleIncomingPacket);
         }
 
@@ -249,6 +253,8 @@ export class ProtoV2dServer extends EventEmitter {
                     }
 
                     if (handshakePacket[1] === 1) {
+                        this.debug(`received client handshake v1 initial packet`);
+
                         // Client supports version 1 ONLY
                         state.version = 1;
                         state.currentPacket = 1;
@@ -270,6 +276,7 @@ export class ProtoV2dServer extends EventEmitter {
                         state.encryption = true;
 
                         wc.send(joinUint8Array([0x02], handshakePacket));
+                        return;
                     } else if (handshakePacket[1] === 2) {
                         // Handshake version 2
                         if (!handshakePacket[2].includes(2)) {
@@ -278,6 +285,8 @@ export class ProtoV2dServer extends EventEmitter {
                             closeConnection();
                             return;
                         }
+
+                        this.debug(`received client handshake v2 initial packet`);
 
                         // Client supports version 2
                         state.version = 2;
@@ -292,9 +301,12 @@ export class ProtoV2dServer extends EventEmitter {
                                 return;
                             }
 
-                            // Handshake without encryption (no signature needed)
-                            wc.send(joinUint8Array([0x02, 0x02], state.challenge2));
                             state.encryption = false;
+
+                            // Handshake without encryption (no signature needed)
+                            this.debug(`sending handshake v2 packet ${state.currentPacket}`);
+                            wc.send(joinUint8Array([0x02, 0x02, 0x02], state.challenge2));
+                            
                         } else if (handshakePacket[3] === 0 || handshakePacket[3] === 1) {
                             // Handshake with encryption
                             state.encryption = true;
@@ -313,6 +325,7 @@ export class ProtoV2dServer extends EventEmitter {
                             let { signature: signaturePQ } = await (await this.dilithium5).sign(fullPublicKey, this.pqKeyPair.privateKey);
                             let signatureClassic = ed25519.sign(fullPublicKey, this.classicKeyPair.privateKey);
 
+                            this.debug(`sending handshake v2 packet ${state.currentPacket}`);
                             wc.send(joinUint8Array(
                                 [0x02, 0x02, 0x01],
                                 fullPublicKey,
@@ -349,6 +362,7 @@ export class ProtoV2dServer extends EventEmitter {
                                     // Invalid state
                                     closeConnection(); return;
                                 }
+                                this.debug(`received handshake v1 packet ${state.currentPacket}`);
                                 let cK = hexToUint8Array(enc[1]);
 
                                 let sharedSecret = await (await this.kyber).decapsulate(cK, asymmKeyPQ!.privateKey);
@@ -376,6 +390,7 @@ export class ProtoV2dServer extends EventEmitter {
                                     // Invalid state
                                     closeConnection(); return;
                                 }
+                                this.debug(`received handshake v1 packet ${state.currentPacket}`);
 
                                 // Verify session
                                 let sessionKey = hexToUint8Array(enc[1]);
@@ -411,24 +426,30 @@ export class ProtoV2dServer extends EventEmitter {
                                 let sessionID = Uint8ArrayToHex(sessionKey);
                                 if (this.sessions.has(sessionID) && !this.sessions.get(sessionID)!.closed) {
                                     // Session already exists, resume
-                                    wc.send([0x04, 0x00]);
+                                    let encryptedPacket = await aesEncrypt(encode([6, false]), encryptionKeyPQ!, false);
+                                    wc.send(joinUint8Array([0x02], encryptedPacket));
 
                                     session = this.sessions.get(sessionID)!;
                                     session.clientSide = false;
                                     session.protocolVersion = 1;
                                     session.wc = wc;
                                     session.encryption = [encryptionKeyPQ!];
+
+                                    this.debug("successfully resumed session");
                                 } else {
                                     // Session doesn't exist, create new
-                                    wc.send([0x04, 0x01]);
+                                    let encryptedPacket = await aesEncrypt(encode([6, true]), encryptionKeyPQ!, false);
+                                    wc.send(joinUint8Array([0x02], encryptedPacket));
 
-                                    session = new ProtoV2dSession(sessionID, 2, false, wc, [encryptionKeyPQ!], this.config.pingTimeout || 10000);
+                                    session = new ProtoV2dSession(sessionID, 1, false, wc, [encryptionKeyPQ!], this.config.pingTimeout || 10000);
                                     this.sessions.set(sessionID, session);
 
                                     // session lifecycle management
                                     this._handleSessionLifecycle(session);
 
                                     this.emit("connection", session);
+
+                                    this.debug("successfully created new session");
                                 }
 
                                 // handshaked done, drop handshake handler.
@@ -452,6 +473,7 @@ export class ProtoV2dServer extends EventEmitter {
                                     // Invalid state
                                     closeConnection(); return;
                                 }
+                                this.debug(`received handshake v2 packet ${state.currentPacket}`);
 
                                 let sigPart: Uint8Array;
                                 if (state.encryption) {
@@ -492,8 +514,10 @@ export class ProtoV2dServer extends EventEmitter {
                                     let sigPartRaw = rawPacket.slice(1602);
                                     sigPart = await aesDecrypt(await aesDecrypt(sigPartRaw, encryptionKeyClassic, true), encryptionKeyPQ, true);
                                 } else {
-                                    sigPart = rawPacket.slice(1);
+                                    sigPart = rawPacket.slice(2);
                                 }
+
+                                this.debug(`signature length ${sigPart.length}, encryption: ${state.encryption}`);
 
                                 // Verify signature
                                 let sessionClassic = sigPart.slice(0, 32);
@@ -520,11 +544,15 @@ export class ProtoV2dServer extends EventEmitter {
                                 state.currentPacket = 2;
                                 state.handshaked = true;
 
+                                this.debug("successfully handshaked");
+
                                 // Create session
                                 let sessionID = Uint8ArrayToHex(fullSessionPublic);
                                 if (this.sessions.has(sessionID) && !this.sessions.get(sessionID)!.closed) {
+                                    this.debug("resuming");
+
                                     // Session already exists, resume
-                                    wc.send([0x04, 0x00]);
+                                    wc.send([0x02, 0x04, 0x00]);
 
                                     session = this.sessions.get(sessionID)!;
                                     session.clientSide = false;
@@ -533,8 +561,9 @@ export class ProtoV2dServer extends EventEmitter {
                                     session.encryption = [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull);
                                     session.timeout = this.config.pingTimeout || 10000;
                                 } else {
+                                    this.debug("creating new session");
                                     // Session doesn't exist, create new
-                                    wc.send([0x04, 0x01]);
+                                    wc.send([0x02, 0x04, 0x01]);
 
                                     session = new ProtoV2dSession(sessionID, 2, false, wc, [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull), this.config.pingTimeout || 10000);
                                     this.sessions.set(sessionID, session);

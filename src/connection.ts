@@ -12,12 +12,12 @@ export interface WrappedConnection<BackendData> extends EventEmitter {
     /** Emit data from your own protocol to be handled. */
     emit(event: "rx", data: Uint8Array): boolean;
 
+    /** Connection is closed. May be emitted multiple times, use `once`: {@link once(event: "close")} instead. */
+    on(event: "close", listener: (explict?: boolean) => void): this;
     /** Connection is closed. */
-    on(event: "close", listener: () => void): this;
-    /** Connection is closed. */
-    once(event: "close", listener: () => void): this;
+    once(event: "close", listener: (explict?: boolean) => void): this;
     /** Close connection. */
-    emit(event: "close"): boolean;
+    emit(event: "close", explict?: boolean): boolean;
 }
 
 export class WrappedConnection<BackendData = any> extends EventEmitter {
@@ -25,7 +25,7 @@ export class WrappedConnection<BackendData = any> extends EventEmitter {
 
     constructor(public realIP: Address4 | Address6 | null = null, public backendData: BackendData | null = null) {
         super();
-        this.on("close", () => closed = true);
+        this.on("close", () => this.closed = true);
     }
 
     send(data: number[] | Uint8Array) {

@@ -12,6 +12,9 @@ import { NRError } from "./error.js";
 import { x25519, ed25519 } from "@noble/curves/ed25519";
 import { getDilithium5, getKyber } from "./pqcache.js";
 
+import debug from "debug";
+const log = debug("protov2d:client");
+
 export type ClientCommonConfig = {
     timeout?: number,
     publicKeys: ({
@@ -20,9 +23,9 @@ export type ClientCommonConfig = {
     } | {
         type: "hash",
         value: string | Uint8Array
-    })[] | [{
+    } | {
         type: "noverify"
-    }],
+    })[],
     disableEncryption?: boolean,
     existingData?: {
         sessionKey?: Uint8Array,
@@ -88,7 +91,10 @@ export async function connectWithCustomConnect<CustomConfig, BackendData>(
             });
             sessionObject = baseSession;
 
-            baseSession.wc!.once("close", async () => {
+            baseSession.wc!.once("close", async (explict) => {
+                // do not reconnect if explictly closed
+                if (explict) return;
+
                 for (; ;)
                     try {
                         await connectFunc({
@@ -124,6 +130,7 @@ export async function connectWithCustomConnect<CustomConfig, BackendData>(
 export function connectWebsocket(config: ClientWSConfig) {
     return new Promise<ProtoV2dSession<WebSocket>>(async (resolve, reject) => {
         let ws = new WebSocket(config.url);
+        log("attempting to connect to ws server");
         ws.binaryType = "arraybuffer";
 
         // Client side cannot access real server IP.
@@ -134,6 +141,7 @@ export function connectWebsocket(config: ClientWSConfig) {
             ws.removeEventListener("error", handleError);
             ws.removeEventListener("close", handleClose);
             ws.removeEventListener("message", handleData);
+            wc.removeListener("tx", handleSendData);
         }
 
         function handleClose(e: WebSocket.CloseEvent) {
@@ -141,6 +149,7 @@ export function connectWebsocket(config: ClientWSConfig) {
             ws.removeEventListener("error", handleError);
             ws.removeEventListener("close", handleClose);
             ws.removeEventListener("message", handleData);
+            wc.removeListener("tx", handleSendData);
         }
 
         async function handleData(e: WebSocket.MessageEvent) {
@@ -161,12 +170,34 @@ export function connectWebsocket(config: ClientWSConfig) {
             wc.emit("rx", d);
         }
 
+        async function handleSendData(data: Uint8Array) {
+            if (ws.readyState !== ws.OPEN) {
+                reject(new Error("connection is not open"));
+                return;
+            }
+
+            ws.send(data);
+        }
+
         ws.addEventListener("error", handleError);
         ws.addEventListener("close", handleClose);
         ws.addEventListener("message", handleData);
         await new Promise<void>(r => ws.addEventListener("open", () => r()));
+        wc.on("tx", handleSendData);
+        wc.once("close", () => ws.close());
+        ws.once("close", () => wc.emit("close", false));
 
-        return connectWrapped({ ...config, wc });
+        log("connected to ws server");
+
+        try {
+            resolve(connectWrapped({ ...config, wc }));
+        } catch (e) {
+            reject(e);
+            ws.removeEventListener("error", handleError);
+            ws.removeEventListener("close", handleClose);
+            ws.removeEventListener("message", handleData);
+            wc.removeListener("tx", handleSendData);
+        }
     });
 }
 
@@ -194,7 +225,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
         }
 
         let noVerify = !!config.publicKeys.find(x => x.type === "noverify");
-        let pkValues: [isHash: boolean, Uint8Array][] = [];
+        let pkValues: [isHash: boolean, value: Uint8Array][] = [];
         if (!noVerify) {
             for (let pk of config.publicKeys) {
                 if (pk.type === "key") {
@@ -228,7 +259,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
 
         function rejectHandshake(reason: string, nonRecoverable = false) {
             reject(nonRecoverable ? new NRError(reason) : new Error(reason));
-            wc.emit("close");
+            wc.emit("close", false);
             wc.removeListener("rx", onIncomingData);
         }
 
@@ -244,6 +275,8 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                 else {
                     rejectHandshake("Unknown version"); return;
                 };
+
+                log(`negotiated version ${state.version}`);
             }
 
             if (state.version === 1 && config.handshakeV1 === "disabled") {
@@ -258,6 +291,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             if (packet[0] !== 2) {
                                 rejectHandshake("Invalid packet"); return;
                             }
+                            log(`received handshake v1 packet ${state.currentPacket}`)
 
                             let pqPK = hexToUint8Array(packet[1]);
 
@@ -273,11 +307,19 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                                     rejectHandshake("No public key matches"); return;
                                 }
 
+                                let signatureClassic = signature.slice(0, 64);
+                                let signaturePQ = signature.slice(64);
+                                let signaturePKClassic = signaturePK.slice(0, 32);
+                                let signaturePKPQ = signaturePK.slice(32);
 
-                                let verified = await dilithium5.verify(signature, pqPK, signaturePK);
+                                let verified1 = ed25519.verify(signatureClassic, pqPK, signaturePKClassic);
+                                if (!verified1) {
+                                    rejectHandshake("New public key classic signature verification failed"); return;
+                                }
 
-                                if (!verified) {
-                                    rejectHandshake("New public key signature verification failed"); return;
+                                let verified2 = await dilithium5.verify(signaturePQ, pqPK, signaturePKPQ);
+                                if (!verified2) {
+                                    rejectHandshake("New public key PQ signature verification failed"); return;
                                 }
                             }
 
@@ -287,7 +329,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             encryptionKeyPQ = await crypto.subtle.importKey("raw", enc.sharedSecret, "AES-GCM", false, ["encrypt", "decrypt"]);
 
                             state.currentPacket = 2;
-                            wc.send(joinUint8Array([0x02], encode([3, enc.ciphertext])));
+                            wc.send(joinUint8Array([0x02], encode([3, Uint8ArrayToHex(enc.ciphertext)])));
                             break;
                         }
 
@@ -296,6 +338,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             if (packet[0] !== 4) {
                                 rejectHandshake("Invalid packet"); return;
                             }
+                            log(`received handshake v1 packet ${state.currentPacket}`);
 
                             let encoder = new TextEncoder();
                             let rnd = encoder.encode(packet[1]);
@@ -306,7 +349,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             let signature = Uint8ArrayToHex(ed25519.sign(rnd, sessionKeyClassic)) + Uint8ArrayToHex((await dilithium5.sign(rnd, sessionKeyPQ)).signature);
 
                             state.currentPacket = 3;
-                            wc.send(joinUint8Array([0x02], await aesEncrypt(encode([5, sessionID, signature]), encryptionKeyPQ!, false)));
+                            wc.send(joinUint8Array([0x02], await aesEncrypt(encode([5, Uint8ArrayToHex(sessionID), signature]), encryptionKeyPQ!, false)));
                             break;
                         }
 
@@ -315,6 +358,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             if (packet[0] !== 6) {
                                 rejectHandshake("Invalid packet"); return;
                             }
+                            log(`received handshake v1 packet ${state.currentPacket}`);
 
                             state.handshaked = true;
                             state.currentPacket = 4;
@@ -352,6 +396,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             if (data[1] !== 0x02) {
                                 rejectHandshake("Invalid packet"); return;
                             }
+                            log(`received handshake v2 packet ${state.currentPacket}`);
 
                             switch (data[2]) {
                                 case 0x01: {
@@ -411,19 +456,21 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
 
                                     let classicRandomPrivate = crypto.getRandomValues(new Uint8Array(32));
                                     let classicRandomPublic = x25519.getPublicKey(classicRandomPrivate);
-                                    
+
                                     let classicKey = x25519.getSharedSecret(classicRandomPrivate, exchangeClassic);
                                     encryptionKeyClassic = await crypto.subtle.importKey("raw", classicKey, "AES-GCM", false, ["encrypt", "decrypt"]);
 
                                     let sessionSignatureClassic = ed25519.sign(random, sessionKey.slice(0, 32));
                                     let sessionSignaturePQ = (await dilithium5.sign(random, sessionKey.slice(32))).signature;
 
+                                    log(`sending handshake v2 packet ${state.currentPacket}`);
                                     state.currentPacket = 2;
                                     wc.send(joinUint8Array(
-                                        [0x03], 
-                                        classicRandomPublic, pqData.ciphertext, 
-                                        await aesEncrypt(await aesEncrypt(joinUint8Array(sessionSignatureClassic, sessionSignaturePQ), encryptionKeyPQ, true), encryptionKeyClassic, true)
+                                        [0x02, 0x03],
+                                        classicRandomPublic, pqData.ciphertext,
+                                        await aesEncrypt(await aesEncrypt(joinUint8Array(sessionID, sessionSignatureClassic, sessionSignaturePQ), encryptionKeyPQ, true), encryptionKeyClassic, true)
                                     ));
+                                    log(`signature length ${sessionID.length + sessionSignatureClassic.length + sessionSignaturePQ.length}`);
                                     break;
                                 }
 
@@ -439,8 +486,10 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                                     let sessionSignatureClassic = ed25519.sign(random, sessionKey.slice(0, 32));
                                     let sessionSignaturePQ = (await dilithium5.sign(random, sessionKey.slice(32))).signature;
 
+                                    log(`sending handshake v2 packet ${state.currentPacket}`);
                                     state.currentPacket = 2;
-                                    wc.send(joinUint8Array([0x03], sessionSignatureClassic, sessionSignaturePQ));
+                                    wc.send(joinUint8Array([0x02, 0x03], sessionID, sessionSignatureClassic, sessionSignaturePQ));
+                                    log(`signature length ${sessionID.length + sessionSignatureClassic.length + sessionSignaturePQ.length}`);
                                     break;
                                 }
 
@@ -465,11 +514,13 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             if (data[1] !== 0x04) {
                                 rejectHandshake("Invalid packet"); return;
                             }
+                            log(`received handshake v2 packet ${state.currentPacket}`);
 
                             state.handshaked = true;
-                            state.currentPacket = 4;
+                            state.currentPacket = 3;
 
                             if (data[1]) {
+                                log(`handshake done, resume failed`);
                                 let newSession = new ProtoV2dSession(Uint8ArrayToHex(sessionID), 2, true, wc, [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull), timeout);
                                 if (sessionObject) {
                                     sessionObject.emit("resumeFailed", newSession);
@@ -478,6 +529,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
 
                                 sessionObject = newSession;
                             } else {
+                                log(`handshake done, resume success`);
                                 if (!sessionObject) {
                                     sessionObject = new ProtoV2dSession(Uint8ArrayToHex(sessionID), 2, true, wc, [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull), timeout);
                                 } else {
@@ -504,10 +556,12 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
         if (config.handshakeV1 === "forced") {
             state.version = 1;
             state.currentPacket = 1;
-            wc.send(encode([1, 1]));
+            log("sending handshake v1");
+            wc.send(joinUint8Array([0x02], encode([1, 1])));
         } else {
             state.version = config.handshakeV1 === "disabled" ? 2 : 0;
             state.currentPacket = 1;
+            log("sending handshake v2");
             wc.send(joinUint8Array([0x02], encode([1, 2, [2], config.disableEncryption ? 2 : (isFullKeyOnly ? 0 : 1)])));
         }
     });

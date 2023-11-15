@@ -1,5 +1,5 @@
-import Kyber, { type KEM as KyberKEM } from "@dashlane/pqc-kem-kyber1024-node";
-import Dilithium5, { type SIGN as Dilithium5SIGN } from "@dashlane/pqc-sign-dilithium5-node";
+import Kyber, { type KEM as KyberKEM } from "@dashlane/pqc-kem-kyber1024-browser";
+import Dilithium5, { type SIGN as Dilithium5SIGN } from "@dashlane/pqc-sign-dilithium5-browser";
 
 let kyberCacheNonWASM: KyberKEM;
 let kyberCacheWASM: KyberKEM;
