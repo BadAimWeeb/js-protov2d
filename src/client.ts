@@ -4,7 +4,7 @@ import { encode, decode } from "msgpack-lite";
 import { WrappedConnection } from "./connection.js";
 import ProtoV2dSession from "./session.js";
 import { Buffer } from "buffer";
-import { Uint8ArrayToHex, aesDecrypt, aesEncrypt, exactArray, hexToUint8Array, joinUint8Array } from "./utils.js";
+import { Uint8ArrayToHex, aesDecrypt, aesEncrypt, exactArray, filterNull, hexToUint8Array, joinUint8Array } from "./utils.js";
 import { keyGeneration } from "./keygen.js";
 
 import { NRError } from "./error.js";
@@ -273,7 +273,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                                     rejectHandshake("No public key matches"); return;
                                 }
 
-                                
+
                                 let verified = await dilithium5.verify(signature, pqPK, signaturePK);
 
                                 if (!verified) {
@@ -281,7 +281,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                                 }
                             }
 
-                            
+
                             let enc = await kyber.encapsulate(pqPK);
 
                             encryptionKeyPQ = await crypto.subtle.importKey("raw", enc.sharedSecret, "AES-GCM", false, ["encrypt", "decrypt"]);
@@ -347,6 +347,153 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                 }
 
                 case 2: {
+                    switch (state.currentPacket) {
+                        case 1: {
+                            if (data[1] !== 0x02) {
+                                rejectHandshake("Invalid packet"); return;
+                            }
+
+                            switch (data[2]) {
+                                case 0x01: {
+                                    // Encryption enabled
+                                    state.encryption = true;
+
+                                    let exchangeClassic = data.slice(3, 35);
+                                    let exchangePQ = data.slice(35, 1603);
+                                    let exchangeFull = data.slice(3, 1603);
+                                    let random = data.slice(6262, 6326);
+
+                                    if (!noVerify) {
+                                        let signatureClassic = data.slice(1603, 1667);
+                                        let signaturePQ = data.slice(1667, 6262);
+
+                                        let pk = data.slice(6326);
+                                        let pkh = isFullKeyOnly ? pk : new Uint8Array(await crypto.subtle.digest("SHA-256", pk));
+
+                                        let kc = await Promise.all(pkValues.map(async v => {
+                                            if (v[0]) {
+                                                // Public key hash
+                                                return [pk, exactArray(v[1], pkh)] as const;
+                                            } else {
+                                                if (isFullKeyOnly) {
+                                                    // Server will send hash only. Compute hash.
+                                                    let vPKH = new Uint8Array(await crypto.subtle.digest("SHA-256", v[1]));
+
+                                                    return [v[1], exactArray(vPKH, pkh)] as const;
+                                                } else {
+                                                    // Server will send full key.
+                                                    return [v[1], exactArray(v[1], pk)] as const;
+                                                }
+                                            }
+                                        }));
+
+                                        let k = kc.find(x => x[1]);
+                                        if (!k) {
+                                            rejectHandshake("No public key matches"); return;
+                                        }
+
+                                        let classicPart = k[0].slice(0, 32);
+                                        let pqPart = k[0].slice(32);
+
+                                        let verified1 = ed25519.verify(signatureClassic, exchangeFull, classicPart);
+                                        if (!verified1) {
+                                            rejectHandshake("New public key classic signature verification failed"); return;
+                                        }
+
+                                        let verified2 = await dilithium5.verify(signaturePQ, exchangeFull, pqPart);
+                                        if (!verified2) {
+                                            rejectHandshake("New public key PQ signature verification failed"); return;
+                                        }
+                                    }
+
+                                    let pqData = await kyber.encapsulate(exchangePQ);
+                                    encryptionKeyPQ = await crypto.subtle.importKey("raw", pqData.sharedSecret, "AES-GCM", false, ["encrypt", "decrypt"]);
+
+                                    let classicRandomPrivate = crypto.getRandomValues(new Uint8Array(32));
+                                    let classicRandomPublic = x25519.getPublicKey(classicRandomPrivate);
+                                    
+                                    let classicKey = x25519.getSharedSecret(classicRandomPrivate, exchangeClassic);
+                                    encryptionKeyClassic = await crypto.subtle.importKey("raw", classicKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+
+                                    let sessionSignatureClassic = ed25519.sign(random, sessionKey.slice(0, 32));
+                                    let sessionSignaturePQ = (await dilithium5.sign(random, sessionKey.slice(32))).signature;
+
+                                    state.currentPacket = 2;
+                                    wc.send(joinUint8Array(
+                                        [0x03], 
+                                        classicRandomPublic, pqData.ciphertext, 
+                                        await aesEncrypt(await aesEncrypt(joinUint8Array(sessionSignatureClassic, sessionSignaturePQ), encryptionKeyPQ, true), encryptionKeyClassic, true)
+                                    ));
+                                    break;
+                                }
+
+                                case 0x02: {
+                                    // Encryption disabled
+                                    state.encryption = false;
+
+                                    if (!config.disableEncryption) {
+                                        rejectHandshake("Server send non-encryption, but client does not disable encryption."); return;
+                                    }
+
+                                    let random = data.slice(3, 67);
+                                    let sessionSignatureClassic = ed25519.sign(random, sessionKey.slice(0, 32));
+                                    let sessionSignaturePQ = (await dilithium5.sign(random, sessionKey.slice(32))).signature;
+
+                                    state.currentPacket = 2;
+                                    wc.send(joinUint8Array([0x03], sessionSignatureClassic, sessionSignaturePQ));
+                                    break;
+                                }
+
+                                case 0x03: {
+                                    // Server does not allow non-encryption
+                                    rejectHandshake("Server does not allow disabling encryption"); return;
+                                }
+
+                                case 0x04: {
+                                    // Version mismatch
+                                    rejectHandshake(`Server does not support client version (advertised: ${(decode(data.slice(3)) as number[]).join(", ")}; client supported: 2)`); return;
+                                }
+
+                                default: {
+                                    rejectHandshake("Invalid packet"); return;
+                                }
+                            }
+                            break;
+                        }
+
+                        case 2: {
+                            if (data[1] !== 0x04) {
+                                rejectHandshake("Invalid packet"); return;
+                            }
+
+                            state.handshaked = true;
+                            state.currentPacket = 4;
+
+                            if (data[1]) {
+                                let newSession = new ProtoV2dSession(Uint8ArrayToHex(sessionID), 2, true, wc, [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull), timeout);
+                                if (sessionObject) {
+                                    sessionObject.emit("resumeFailed", newSession);
+                                    sessionObject.close();
+                                }
+
+                                sessionObject = newSession;
+                            } else {
+                                if (!sessionObject) {
+                                    sessionObject = new ProtoV2dSession(Uint8ArrayToHex(sessionID), 2, true, wc, [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull), timeout);
+                                } else {
+                                    sessionObject.protocolVersion = 2;
+                                    sessionObject.encryption = [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull);
+                                    sessionObject.wc = wc;
+                                    sessionObject.timeout = timeout;
+                                }
+                            }
+
+                            resolve(sessionObject);
+                            // handshake done
+                            wc.removeListener("rx", onIncomingData);
+                            break;
+                        }
+                    }
                     break;
                 }
             }

@@ -531,6 +531,7 @@ export class ProtoV2dServer extends EventEmitter {
                                     session.protocolVersion = 2;
                                     session.wc = wc;
                                     session.encryption = [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull);
+                                    session.timeout = this.config.pingTimeout || 10000;
                                 } else {
                                     // Session doesn't exist, create new
                                     wc.send([0x04, 0x01]);
