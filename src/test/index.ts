@@ -127,5 +127,13 @@ await new Promise<void>(r => {
     });
 });
 
+let client4 = await connect({
+    url: `wss://edge1-status.badaimweeb.me/`,
+    publicKeys: [{
+        type: "noverify"
+    }],
+    maxInitialRetries: 1
+});
+
 console.log("All test passed!");
 process.exit(0);

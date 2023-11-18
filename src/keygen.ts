@@ -11,7 +11,9 @@ export async function keyGeneration(disableWASM?: boolean) {
     let classicPublicKey = ed25519.getPublicKey(classicPrivateKey);
 
     let keyPair = {
-        privateKey: joinUint8Array(classicPrivateKey, pqKeyPair.privateKey),
+        // Compatibilty with old keygen:
+        // ed25519 private key generated is essentially 32 bytes seed and 32 bytes public key.
+        privateKey: joinUint8Array(classicPrivateKey, classicPublicKey, pqKeyPair.privateKey),
         publicKey: joinUint8Array(classicPublicKey, pqKeyPair.publicKey)
     };
 

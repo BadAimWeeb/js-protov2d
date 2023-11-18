@@ -259,8 +259,15 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
 
         function rejectHandshake(reason: string, nonRecoverable = false) {
             reject(nonRecoverable ? new NRError(reason) : new Error(reason));
+            wc.removeListener("close", onCloseWS);
             wc.emit("close", false);
             wc.removeListener("rx", onIncomingData);
+        }
+
+        function onCloseWS() {
+            reject(new Error("Socket closed before handshake succeeded"));
+            wc.removeListener("rx", onIncomingData);
+            wc.removeListener("close", onCloseWS);
         }
 
         async function onIncomingData(data: Uint8Array) {
@@ -308,9 +315,13 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                                 }
 
                                 let signatureClassic = signature.slice(0, 64);
-                                let signaturePQ = signature.slice(64);
+                                let signaturePQ = signature.slice(66); // 2-byte length?
                                 let signaturePKClassic = signaturePK.slice(0, 32);
                                 let signaturePKPQ = signaturePK.slice(32);
+
+                                if (signature[64] !== 0xf3 || signature[65] !== 0x11) {
+                                    rejectHandshake("Invalid signature"); return;
+                                }
 
                                 let verified1 = ed25519.verify(signatureClassic, pqPK, signaturePKClassic);
                                 if (!verified1) {
@@ -344,9 +355,12 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             let rnd = encoder.encode(packet[1]);
 
                             let sessionKeyClassic = sessionKey.slice(0, 32);
-                            let sessionKeyPQ = sessionKey.slice(32);
+                            let sessionKeyPQ = sessionKey.slice(64);
 
-                            let signature = Uint8ArrayToHex(ed25519.sign(rnd, sessionKeyClassic)) + Uint8ArrayToHex((await dilithium5.sign(rnd, sessionKeyPQ)).signature);
+                            // `superdilithium`/dilithium5 implementation used in v1-capable servers uses the first 2 bytes to indicate the length of the signature (F311 = 4595 in little-endian).
+                            // seriously what the fuck
+                            // this wasted 2 hours of my life
+                            let signature = Uint8ArrayToHex(ed25519.sign(rnd, sessionKeyClassic)) + "f311" + Uint8ArrayToHex((await dilithium5.sign(rnd, sessionKeyPQ)).signature);
 
                             state.currentPacket = 3;
                             wc.send(joinUint8Array([0x02], await aesEncrypt(encode([5, Uint8ArrayToHex(sessionID), signature]), encryptionKeyPQ!, false)));
@@ -384,6 +398,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             resolve(sessionObject);
                             // handshake done
                             wc.removeListener("rx", onIncomingData);
+                            wc.removeListener("close", onCloseWS);
                             break;
                         }
                     }
@@ -442,12 +457,12 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
 
                                         let verified1 = ed25519.verify(signatureClassic, exchangeFull, classicPart);
                                         if (!verified1) {
-                                            rejectHandshake("New public key classic signature verification failed"); return;
+                                            rejectHandshake("New public key classic signature verification failed", true); return;
                                         }
 
                                         let verified2 = await dilithium5.verify(signaturePQ, exchangeFull, pqPart);
                                         if (!verified2) {
-                                            rejectHandshake("New public key PQ signature verification failed"); return;
+                                            rejectHandshake("New public key PQ signature verification failed", true); return;
                                         }
                                     }
 
@@ -461,7 +476,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                                     encryptionKeyClassic = await crypto.subtle.importKey("raw", classicKey, "AES-GCM", false, ["encrypt", "decrypt"]);
 
                                     let sessionSignatureClassic = ed25519.sign(random, sessionKey.slice(0, 32));
-                                    let sessionSignaturePQ = (await dilithium5.sign(random, sessionKey.slice(32))).signature;
+                                    let sessionSignaturePQ = (await dilithium5.sign(random, sessionKey.slice(64))).signature;
 
                                     log(`sending handshake v2 packet ${state.currentPacket}`);
                                     state.currentPacket = 2;
@@ -484,7 +499,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
 
                                     let random = data.slice(3, 67);
                                     let sessionSignatureClassic = ed25519.sign(random, sessionKey.slice(0, 32));
-                                    let sessionSignaturePQ = (await dilithium5.sign(random, sessionKey.slice(32))).signature;
+                                    let sessionSignaturePQ = (await dilithium5.sign(random, sessionKey.slice(64))).signature;
 
                                     log(`sending handshake v2 packet ${state.currentPacket}`);
                                     state.currentPacket = 2;
@@ -552,6 +567,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
         }
 
         wc.on("rx", onIncomingData);
+        wc.on("close", onCloseWS);
 
         if (config.handshakeV1 === "forced") {
             state.version = 1;

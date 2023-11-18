@@ -102,7 +102,7 @@ export class ProtoV2dServer extends EventEmitter {
         };
 
         this.pqKeyPair = {
-            privateKey: fullPrivateKey.slice(32),
+            privateKey: fullPrivateKey.slice(64),
             publicKey: fullPublicKey.slice(32)
         };
 
@@ -264,12 +264,15 @@ export class ProtoV2dServer extends EventEmitter {
                         asymmKeyPQ = await (await this.kyber).keypair();
 
                         let { signature: signaturePQ } = await (await this.dilithium5).sign(asymmKeyPQ.publicKey, this.pqKeyPair.privateKey);
-                        let signatureClassic = ed25519.sign(asymmKeyPQ.publicKey, this.classicKeyPair.privateKey);
+                        let signatureClassic = ed25519.sign(asymmKeyPQ.publicKey, this.classicKeyPair.privateKey.slice(0, 32));
 
                         let handshakePacket = encode([
                             2,
                             Uint8ArrayToHex(asymmKeyPQ.publicKey),
-                            Uint8ArrayToHex(signatureClassic) + Uint8ArrayToHex(signaturePQ),
+                            // `superdilithium`/dilithium5 implementation used in v1-capable servers uses the first 2 bytes to indicate the length of the signature (F311 = 4595 in little-endian).
+                            // seriously what the fuck
+                            // this wasted 2 hours of my life
+                            Uint8ArrayToHex(signatureClassic) + "f311" + Uint8ArrayToHex(signaturePQ),
                             Uint8ArrayToHex(this.classicKeyPair.publicKey) + Uint8ArrayToHex(this.pqKeyPair.publicKey)
                         ]);
 
@@ -306,7 +309,7 @@ export class ProtoV2dServer extends EventEmitter {
                             // Handshake without encryption (no signature needed)
                             this.debug(`sending handshake v2 packet ${state.currentPacket}`);
                             wc.send(joinUint8Array([0x02, 0x02, 0x02], state.challenge2));
-                            
+
                         } else if (handshakePacket[3] === 0 || handshakePacket[3] === 1) {
                             // Handshake with encryption
                             state.encryption = true;
@@ -323,7 +326,7 @@ export class ProtoV2dServer extends EventEmitter {
                             fullPublicKey.set(asymmKeyPQ.publicKey, asymmKeyClassic.publicKey.length);
 
                             let { signature: signaturePQ } = await (await this.dilithium5).sign(fullPublicKey, this.pqKeyPair.privateKey);
-                            let signatureClassic = ed25519.sign(fullPublicKey, this.classicKeyPair.privateKey);
+                            let signatureClassic = ed25519.sign(fullPublicKey, this.classicKeyPair.privateKey.slice(0, 32));
 
                             this.debug(`sending handshake v2 packet ${state.currentPacket}`);
                             wc.send(joinUint8Array(
@@ -399,7 +402,13 @@ export class ProtoV2dServer extends EventEmitter {
                                 let sessionClassic = sessionKey.slice(0, 32);
                                 let sessionPQ = sessionKey.slice(32);
                                 let signatureClassic = signature.slice(0, 64);
-                                let signaturePQ = signature.slice(64);
+                                let signaturePQ = signature.slice(66);
+
+                                if (signature[64] !== 0xF3 || signature[65] !== 0x11) {
+                                    this.debug("invalid post-quantum magic number signature for session");
+                                    closeConnection(); 
+                                    return;
+                                }
 
                                 let utf8 = new TextEncoder();
                                 let random = utf8.encode(state.challenge1);
