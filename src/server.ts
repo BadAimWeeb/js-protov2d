@@ -8,7 +8,7 @@ import { encode, decode } from "msgpack-lite";
 import ip from "ip-address";
 import debug from "debug";
 
-import { hexToUint8Array, Uint8ArrayToHex, randomString, proxyTrustResolver, aesDecrypt, joinUint8Array, filterNull, aesEncrypt } from "./utils.js";
+import { hexToUint8Array, Uint8ArrayToHex, randomString, proxyTrustResolver, aesDecrypt, joinUint8Array, filterNull, aesEncrypt, SHA512_NULL } from "./utils.js";
 
 import { type KEM as KyberKEM } from "@dashlane/pqc-kem-kyber1024-browser";
 import { type SIGN as Dilithium5SIGN } from "@dashlane/pqc-sign-dilithium5-browser";
@@ -410,8 +410,11 @@ export class ProtoV2dServer extends EventEmitter {
                                     return;
                                 }
 
+                                // v1 server uses signature of sha512(sha512(null) + sha512(random from server)).
                                 let utf8 = new TextEncoder();
-                                let random = utf8.encode(state.challenge1);
+                                let randomRaw = utf8.encode(state.challenge1);
+                                let random512 = new Uint8Array(await crypto.subtle.digest("SHA-512", randomRaw));
+                                let random = new Uint8Array(await crypto.subtle.digest("SHA-512", joinUint8Array(SHA512_NULL, random512)));
 
                                 let verifiedClassic = ed25519.verify(signatureClassic, random, sessionClassic);
                                 if (!verifiedClassic) {

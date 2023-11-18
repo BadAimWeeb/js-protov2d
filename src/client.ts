@@ -4,7 +4,7 @@ import { encode, decode } from "msgpack-lite";
 import { WrappedConnection } from "./connection.js";
 import ProtoV2dSession from "./session.js";
 import { Buffer } from "buffer";
-import { Uint8ArrayToHex, aesDecrypt, aesEncrypt, exactArray, filterNull, hexToUint8Array, joinUint8Array } from "./utils.js";
+import { Uint8ArrayToHex, aesDecrypt, aesEncrypt, exactArray, filterNull, hexToUint8Array, joinUint8Array, SHA512_NULL } from "./utils.js";
 import { keyGeneration } from "./keygen.js";
 
 import { NRError } from "./error.js";
@@ -351,8 +351,11 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             }
                             log(`received handshake v1 packet ${state.currentPacket}`);
 
+                            // v1 server require signature of sha512(sha512(null) + sha512(random from server)).
                             let encoder = new TextEncoder();
-                            let rnd = encoder.encode(packet[1]);
+                            let rndRaw = encoder.encode(packet[1]);
+                            let rnd512 = new Uint8Array(await crypto.subtle.digest("SHA-512", rndRaw));
+                            let rnd = new Uint8Array(await crypto.subtle.digest("SHA-512", joinUint8Array(SHA512_NULL, rnd512)));
 
                             let sessionKeyClassic = sessionKey.slice(0, 32);
                             let sessionKeyPQ = sessionKey.slice(64);

@@ -143,3 +143,5 @@ export function exactArray<T extends ArrayLike<any>>(a: T, b: T) {
 
     return true;
 }
+
+export const SHA512_NULL = new Uint8Array(await crypto.subtle.digest("SHA-512", new Uint8Array(0)));
