@@ -1,39 +1,30 @@
-import { EventEmitter } from "events";
+import { TypedEmitter } from "tiny-typed-emitter";
 import { WrappedConnection } from "./connection";
 import { aesDecrypt, aesEncrypt, joinUint8Array } from "./utils.js";
 import debug from "debug";
 
 const log = debug("protov2d:session");
 
-export default interface ProtoV2dSession extends EventEmitter {
+interface ProtoV2dSessionEvent {
     /** Use this to receive data */
-    on(event: "data", listener: (QoS: 0 | 1, data: Uint8Array) => void): this;
-    emit(event: "data", QoS: 0 | 1, data: Uint8Array): boolean;
+    'data': (QoS: 0 | 1, data: Uint8Array) => void;
 
     /** For internal purposes only: Also captures raw packet that will send to other side */
-    on(event: "data_ret", listener: (data: Uint8Array) => void): this;
-    emit(event: "data_ret", data: Uint8Array): boolean;
+    'data_ret': (data: Uint8Array) => void;
 
     /** Close */
-    on(event: "closed", listener: () => void): this;
-    emit(event: "closed"): boolean;
+    'closed': () => void;
 
     /* Signal */
-    on(event: "disconnected", listener: () => void): this;
-    emit(event: "disconnected"): boolean;
-
-    on(event: "connected", listener: () => void): this;
-    emit(event: "connected"): boolean;
-
-    on(event: "resumeFailed", listener: (newStream: ProtoV2dSession) => void): this;
-    emit(event: "resumeFailed", newStream: ProtoV2dSession): boolean;
-
-    on(event: "wcChanged", listener: (oldWC: WrappedConnection | null, newWC: WrappedConnection | null) => void): this;
-    emit(event: "wcChanged", oldWC: WrappedConnection | null, newWC: WrappedConnection | null): boolean;
+    'disconnected': () => void;
+    'connected': () => void;
+    'resumeFailed': (newStream: ProtoV2dSession) => void;
+    'wcChanged': (oldWC: WrappedConnection | null, newWC: WrappedConnection | null) => void;
 
     /** Ping */
-    on(event: "ping", listener: (ping: number) => void): this;
-    emit(event: "ping", ping: number): boolean;
+    'ping': (ping: number) => void;
+
+    [k: string]: (...args: any[]) => any;
 }
 
 /**
@@ -41,7 +32,7 @@ export default interface ProtoV2dSession extends EventEmitter {
  * 
  * Contains logic used after handshake.
  */
-export default class ProtoV2dSession<BackendData = any> extends EventEmitter {
+export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<ProtoV2dSessionEvent> {
     closed = false;
 
     get connected() {
@@ -303,7 +294,7 @@ export default class ProtoV2dSession<BackendData = any> extends EventEmitter {
                             ]);
 
                             break;
-                        } catch {}
+                        } catch { }
                     }
 
                     this._qos1Wait.delete(dupID);
