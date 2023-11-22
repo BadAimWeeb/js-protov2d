@@ -28,10 +28,10 @@ Preshared key generation:
 import { keyGeneration } from "@badaimweeb/js-protov2d";
 
 let { privateKey, publicKey, publicKeyHash } = await keyGeneration();
-// Note: you should only share public key hash since public key is well over 6kb
+// Note: you should share public key hash instead of full public key since public key is well over 6KB
 ```
 
-Server usage:
+Server usage (using internal WebSocket server):
 ```ts
 import { Server } from "@badaimweeb/js-protov2d";
 
@@ -56,7 +56,7 @@ server.on("connection", session => {
 });
 ```
 
-Server usage (with external HTTP(S) server):
+Server usage (using internal WebSocket server handling external HTTP(S) server) (also works with Express):
 ```ts
 import { createServer as createHTTPServer } from "http";
 
@@ -70,19 +70,6 @@ let server = new Server({
 });
 ```
 
-Server usage (with Express):
-```ts
-import express from "express";
-
-let app = express();
-
-let server = new Server({
-    server: app.listen(0),
-    privateKey,
-    publicKey
-});
-```
-
 Client usage:
 ```ts
 import { connect } from "@badaimweeb/js-protov2d";
@@ -90,19 +77,27 @@ import { connect } from "@badaimweeb/js-protov2d";
 // If you have public key:
 let client = await connect({
     url: `ws://localhost:${port}`,
-    publicKey: {
+    publicKeys: [{
         type: "key",
-        key: publicKey
-    }
+        value: publicKey
+    }]
 });
 
 // or public key hash:
 let client = await connect({
     url: `ws://localhost:${port}`,
-    publicKey: {
+    publicKeys: [{
         type: "hash",
-        hash: publicKeyHash
-    }
+        value: publicKeyHash
+    }]
+});
+
+// or if you don't care about MITM (NOT RECOMMENDED):
+let client = await connect({
+    url: `ws://localhost:${port}`,
+    publicKeys: [{
+        type: "noverify"
+    }]
 });
 
 // send data
