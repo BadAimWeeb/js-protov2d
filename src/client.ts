@@ -179,13 +179,18 @@ export function connectWebsocket(config: ClientWSConfig) {
             ws.send(data);
         }
 
+        function passWCClose() {
+            wc.emit("close", false);
+            ws.removeEventListener("close", passWCClose);
+        }
+
         ws.addEventListener("error", handleError);
         ws.addEventListener("close", handleClose);
         ws.addEventListener("message", handleData);
         await new Promise<void>(r => ws.addEventListener("open", () => r()));
         wc.on("tx", handleSendData);
         wc.once("close", () => ws.close());
-        ws.once("close", () => wc.emit("close", false));
+        ws.addEventListener("close", passWCClose);
 
         log("connected to ws server");
 
