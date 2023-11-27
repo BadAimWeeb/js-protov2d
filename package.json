@@ -1,10 +1,10 @@
 {
   "name": "@badaimweeb/js-protov2d",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "libp2p-less/hardlinked variant of ProtoV2",
   "main": "dist/index.js",
   "browser": {
-    "dist/pqcache.js": "dist/pqcache-browser.js"
+    "./dist/pqcache.js": "./dist/pqcache-browser.js"
   },
   "types": "dist/index.d.ts",
   "scripts": {
