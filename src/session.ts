@@ -144,7 +144,7 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
                 this._ping = Date.now() - startPing;
                 this.emit("ping", this._ping);
             } catch {
-                wc.emit("close", true);
+                wc.emit("close", false);
             }
         }, 15000);
     }
