@@ -231,8 +231,8 @@ export class ProtoV2dServer extends EventEmitter {
         let session: ProtoV2dSession | null = null;
         //#endregion
 
-        let closeConnection = () => {
-            wc.emit("close", false);
+        let closeConnection = (reason?: string) => {
+            wc.emit("close", true, reason);
             wc.removeListener("rx", handleIncomingPacket);
         }
 

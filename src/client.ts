@@ -16,7 +16,10 @@ import debug from "debug";
 const log = debug("protov2d:client");
 
 export type ClientCommonConfig = {
+    /** How long after pinging should the connection be considered disconnected. (ms) */
     timeout?: number,
+    /** How frequent to ping the other server. Lower value mean more frequent ping and more frequent latency value updates. (ms) */
+    pingInterval?: number,
     publicKeys: ({
         type: "key",
         value: string | Uint8Array
@@ -26,6 +29,7 @@ export type ClientCommonConfig = {
     } | {
         type: "noverify"
     })[],
+    /** NOT RECOMMENDED: Only use this when debugging, as your data is transmitted as cleartext if there's no additional encryption layer (TLS) and is viewable using DevTools. */
     disableEncryption?: boolean,
     existingData?: {
         sessionKey?: Uint8Array,
@@ -33,18 +37,32 @@ export type ClientCommonConfig = {
         sessionObject?: ProtoV2dSession
     },
     handshakeV1?: "disabled" | "forced" | "auto",
+    /** In case you're sure that the enviroment cannot run WASM at all, you can disable it. */
     disableWASM?: boolean
 }
 
 export type ClientWSConfig = ClientCommonConfig & { url: string };
 export type ClientWCConfig<BackendData = any> = ClientCommonConfig & { wc: WrappedConnection<BackendData> };
 
+export type ClientReconnectConfig = {
+    /** How long between two connection attempt. (ms) */
+    reconnectionTime?: number,
+    /** How many times to attempt to connect initially before giving up. */
+    maxInitialRetries?: number,
+    /** 
+     * Should the client attempt to reconnect no matter what?
+     * 
+     * If set to true, .close() will instead restart the connection, not disconnecting session. NOT RECOMMENDED UNLESS CLIENT NEEDS TO BE ALWAYS CONNECTED.
+     * */
+    alwaysReconnect?: boolean
+};
+
 /** 
  * Connect to a ProtoV2d server over WebSocket. 
  * 
  * By default, `reconnectionTime` is 5s, this means that it will retry connection every 5s if the connection is closed; `timeout` is 10s.
  */
-export function connect(config: ClientWSConfig & { reconnectionTime?: number, maxInitialRetries?: number }) {
+export function connect(config: ClientWSConfig & ClientReconnectConfig) {
     return connectWithCustomConnect(config, connectWebsocket);
 }
 
@@ -54,7 +72,7 @@ export function connect(config: ClientWSConfig & { reconnectionTime?: number, ma
  * By default, `reconnectionTime` is 5s, this means that it will retry connection every 5s if the connection is closed; `timeout` is 10s.
  */
 export async function connectWithCustomConnect<CustomConfig, BackendData>(
-    config: ClientCommonConfig & CustomConfig & { reconnectionTime?: number, maxInitialRetries?: number },
+    config: ClientCommonConfig & CustomConfig & ClientReconnectConfig,
     connectFunc: (config: ClientCommonConfig & CustomConfig) => Promise<ProtoV2dSession<BackendData>>
 ) {
     let sessionKey: Uint8Array | undefined = void 0, sessionID: Uint8Array | undefined = void 0;
@@ -93,7 +111,9 @@ export async function connectWithCustomConnect<CustomConfig, BackendData>(
 
             baseSession.wc!.once("close", async (explict) => {
                 // do not reconnect if explictly closed
-                if (explict) return;
+                if (explict && !config.alwaysReconnect) {
+                    baseSession.emit("finalClose"); return;
+                };
 
                 for (; ;)
                     try {
@@ -138,6 +158,11 @@ export function connectWebsocket(config: ClientWSConfig) {
 
         function handleError(err: WebSocket.ErrorEvent) {
             reject(err);
+
+            if (!wc.closed) {
+                wc.emit("close", false, err.message);
+            }
+
             ws.removeEventListener("error", handleError);
             ws.removeEventListener("close", handleClose);
             ws.removeEventListener("message", handleData);
@@ -146,6 +171,11 @@ export function connectWebsocket(config: ClientWSConfig) {
 
         function handleClose(e: WebSocket.CloseEvent) {
             reject(new Error(e.reason));
+
+            if (!wc.closed) {
+                wc.emit("close", false, e.reason);
+            }
+
             ws.removeEventListener("error", handleError);
             ws.removeEventListener("close", handleClose);
             ws.removeEventListener("message", handleData);
@@ -179,18 +209,15 @@ export function connectWebsocket(config: ClientWSConfig) {
             ws.send(data);
         }
 
-        function passWCClose() {
-            wc.emit("close", false);
-            ws.removeEventListener("close", passWCClose);
-        }
-
         ws.addEventListener("error", handleError);
         ws.addEventListener("close", handleClose);
         ws.addEventListener("message", handleData);
         await new Promise<void>(r => ws.addEventListener("open", () => r()));
         wc.on("tx", handleSendData);
-        wc.once("close", () => ws.close());
-        ws.addEventListener("close", passWCClose);
+        wc.once("close", (_explict: boolean, reason?: string) => {
+            if (ws.readyState === ws.CLOSED || ws.readyState === ws.CLOSING) return;
+            ws.close(1000, reason);
+        });
 
         log("connected to ws server");
 
@@ -264,15 +291,15 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
 
         function rejectHandshake(reason: string, nonRecoverable = false) {
             reject(nonRecoverable ? new NRError(reason) : new Error(reason));
-            wc.removeListener("close", onCloseWS);
-            wc.emit("close", false);
+            wc.removeListener("close", onCloseWC);
+            wc.emit("close", true, "handshake failed");
             wc.removeListener("rx", onIncomingData);
         }
 
-        function onCloseWS() {
-            reject(new Error("Socket closed before handshake succeeded"));
+        function onCloseWC(_explict: boolean, reason?: string) {
+            reject(new Error("Socket closed before handshake succeeded" + (reason ? ": " + reason : "")));
             wc.removeListener("rx", onIncomingData);
-            wc.removeListener("close", onCloseWS);
+            wc.removeListener("close", onCloseWC);
         }
 
         async function onIncomingData(data: Uint8Array) {
@@ -406,7 +433,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             resolve(sessionObject);
                             // handshake done
                             wc.removeListener("rx", onIncomingData);
-                            wc.removeListener("close", onCloseWS);
+                            wc.removeListener("close", onCloseWC);
                             break;
                         }
                     }
@@ -575,7 +602,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
         }
 
         wc.on("rx", onIncomingData);
-        wc.on("close", onCloseWS);
+        wc.on("close", onCloseWC);
 
         if (config.handshakeV1 === "forced") {
             state.version = 1;

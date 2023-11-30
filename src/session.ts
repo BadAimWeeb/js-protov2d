@@ -24,7 +24,10 @@ interface ProtoV2dSessionEvent {
     /** Ping */
     'ping': (ping: number) => void;
 
-    [k: string]: (...args: any[]) => any;
+    /** Final close. This will be emitted by client reconnection handler. No reconnection will be made. */
+    'finalClose': () => void;
+
+    //[k: string]: (...args: any[]) => any;
 }
 
 /**
@@ -69,7 +72,7 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
         this._encryption = key;
     }
 
-    constructor(public connectionPK: string, public protocolVersion: number, public clientSide: boolean, wc: WrappedConnection<BackendData>, encryption: CryptoKey[], public timeout = 10000) {
+    constructor(public connectionPK: string, public protocolVersion: number, public clientSide: boolean, wc: WrappedConnection<BackendData>, encryption: CryptoKey[], public timeout = 10000, public pingInterval = 15000) {
         super();
         this._wc = wc;
         this._encryption = encryption;
@@ -245,11 +248,11 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
     }
 
     /** Close connection and destory object. All listener will be removed to make this object GC-able. WC pointer will also be null. */
-    public close() {
+    public close(reason?: string) {
         if (!this.closed) this.emit("closed");
         this.closed = true;
         if (this._wc) {
-            this._wc.emit("close", true);
+            this._wc.emit("close", true, reason);
             this.emit("wcChanged", this._wc, null);
         }
         this._wc = null;
