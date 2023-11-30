@@ -569,7 +569,7 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                             state.handshaked = true;
                             state.currentPacket = 3;
 
-                            if (data[1]) {
+                            if (data[2]) {
                                 log(`handshake done, resume failed`);
                                 let newSession = new ProtoV2dSession(Uint8ArrayToHex(sessionID), 2, true, wc, [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull), timeout);
                                 if (sessionObject) {
