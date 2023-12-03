@@ -39,6 +39,8 @@ export type ServerConfig = {
     publicKey: string | Uint8Array;
     streamTimeout?: number;
     pingTimeout?: number;
+    pingInterval?: number;
+    pingAvgCount?: number;
     trustProxy?: boolean | string[];
     allowDisableEncryption?: boolean;
     disableWASM?: boolean;
@@ -203,9 +205,24 @@ export class ProtoV2dServer extends EventEmitter {
             client.send(data);
         });
 
-        wrapped.on("close", () => {
-            client.close();
+        wrapped.on("close", (explictClose, reason) => {
+            if (client.readyState !== ws.CLOSING && client.readyState !== ws.CLOSED) {
+                this.debug("request connection close: explict %s, reason %s", explictClose, reason);
+                client.close(1000, reason);
+            }
             client.removeAllListeners();
+        });
+
+        client.on("close", (code, reason) => {
+            this.debug("connection closed: %d %s", code, reason);
+            if (wrapped.closed) return;
+            wrapped.emit("close", false, Buffer.from(reason).toString("utf-8"));
+        });
+
+        client.on("error", (err) => {
+            this.debug("error on connection: %O", err);
+            if (wrapped.closed) return;
+            wrapped.emit("close", false, err.message);
         });
 
         this.handleWrappedConnection(wrapped);
@@ -406,7 +423,7 @@ export class ProtoV2dServer extends EventEmitter {
 
                                 if (signature[64] !== 0xF3 || signature[65] !== 0x11) {
                                     this.debug("invalid post-quantum magic number signature for session");
-                                    closeConnection(); 
+                                    closeConnection();
                                     return;
                                 }
 
@@ -453,7 +470,10 @@ export class ProtoV2dServer extends EventEmitter {
                                     let encryptedPacket = await aesEncrypt(encode([6, true]), encryptionKeyPQ!, false);
                                     wc.send(joinUint8Array([0x02], encryptedPacket));
 
-                                    session = new ProtoV2dSession(sessionID, 1, false, wc, [encryptionKeyPQ!], this.config.pingTimeout || 10000);
+                                    session = new ProtoV2dSession(
+                                        sessionID, 1, false, wc, [encryptionKeyPQ!], 
+                                        this.config.pingTimeout || 10000, this.config.pingInterval || 15000, this.config.pingAvgCount || 10
+                                    );
                                     this.sessions.set(sessionID, session);
 
                                     // session lifecycle management
@@ -577,7 +597,10 @@ export class ProtoV2dServer extends EventEmitter {
                                     // Session doesn't exist, create new
                                     wc.send([0x02, 0x04, 0x01]);
 
-                                    session = new ProtoV2dSession(sessionID, 2, false, wc, [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull), this.config.pingTimeout || 10000);
+                                    session = new ProtoV2dSession(
+                                        sessionID, 2, false, wc, [encryptionKeyPQ, encryptionKeyClassic].filter(filterNull), 
+                                        this.config.pingTimeout || 10000, this.config.pingInterval || 15000, this.config.pingAvgCount || 10
+                                    );
                                     this.sessions.set(sessionID, session);
 
                                     // session lifecycle management

@@ -63,8 +63,13 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
     }
 
     private _ping = Infinity;
+    private _pings: number[] = [];
     get ping() {
         return this._ping;
+    }
+
+    get avgPing() {
+        return this._pings.reduce((a, b) => a + b, 0) / this._pings.length;
     }
 
     private _encryption: CryptoKey[];
@@ -72,7 +77,7 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
         this._encryption = key;
     }
 
-    constructor(public connectionPK: string, public protocolVersion: number, public clientSide: boolean, wc: WrappedConnection<BackendData>, encryption: CryptoKey[], public timeout = 10000, public pingInterval = 15000) {
+    constructor(public connectionPK: string, public protocolVersion: number, public clientSide: boolean, wc: WrappedConnection<BackendData>, encryption: CryptoKey[], public timeout = 10000, public pingInterval = 15000, public avgPingCount = 10) {
         super();
         this._wc = wc;
         this._encryption = encryption;
@@ -97,6 +102,45 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
         return data;
     }
 
+    private async _generatePing() {
+        if (!this.connected || !this._wc) return;
+        let wc = this._wc;
+
+        let startPing = Date.now();
+        let randomBytes = crypto.getRandomValues(new Uint8Array(16));
+        let resolvePromise: () => void, promise = new Promise<void>((resolve) => resolvePromise = resolve);
+        let handlePingPacket = (data: Uint8Array) => {
+            if (data[0] !== 0x04) return;
+            if (data[1] !== 0x01) return;
+            if (data.length !== 18) return;
+            // Compare random bytes
+            for (let i = 0; i < 16; i++) {
+                if (data[i + 2] !== randomBytes[i]) return;
+            }
+            wc.removeListener("rx", handlePingPacket);
+            resolvePromise();
+        }
+        wc.on("rx", handlePingPacket);
+
+        // Ping packet
+        wc.send(joinUint8Array([0x04, 0x00], randomBytes));
+
+        // Wait for pong packet, if timed out in 10 seconds, then close connection
+        try {
+            await Promise.race([
+                promise,
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), this.timeout))
+            ]);
+
+            this._ping = Date.now() - startPing;
+            this._pings.push(this._ping);
+            if (this._pings.length > this.avgPingCount) this._pings.shift();
+            this.emit("ping", this._ping);
+        } catch {
+            wc.emit("close", false, "Ping ACK timeout");
+        }
+    }
+
     private _handleWC(wc: WrappedConnection) {
         wc.on("rx", this._bindHandleIncomingWCMessage);
         wc.on("close", this._bindHandleWCCloseEvent);
@@ -116,40 +160,27 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
             })();
         }
 
-        this._pingClock = setInterval(async () => {
-            if (!this.connected) return;
-            let startPing = Date.now();
-            let randomBytes = crypto.getRandomValues(new Uint8Array(16));
+        this._pingClock = setInterval(this._generatePing, this.pingInterval);
+        if (this.clientSide) {
+            this._generatePing(); // Generate ping immediately
+        } else {
+            // If we're in server side, we don't want to send the ping packet too fast,
+            // otherwise client (which still haven't done resolving handshake yet) will be confused
+            // and close the connection.
+            // Wait for first ping packet from client before sending our own ping packet.
             let resolvePromise: () => void, promise = new Promise<void>((resolve) => resolvePromise = resolve);
-            let handlePingPacket = (data: Uint8Array) => {
+
+            function handlePingPacket(data: Uint8Array) {
                 if (data[0] !== 0x04) return;
-                if (data[1] !== 0x01) return;
-                if (data.length !== 18) return;
-                // Compare random bytes
-                for (let i = 0; i < 16; i++) {
-                    if (data[i + 2] !== randomBytes[i]) return;
-                }
+                if (data[1] !== 0x00) return;
+
                 wc.removeListener("rx", handlePingPacket);
                 resolvePromise();
             }
             wc.on("rx", handlePingPacket);
 
-            // Ping packet
-            wc.send(joinUint8Array([0x04, 0x00], randomBytes));
-
-            // Wait for pong packet, if timed out in 10 seconds, then close connection
-            try {
-                await Promise.race([
-                    promise,
-                    new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), this.timeout))
-                ]);
-
-                this._ping = Date.now() - startPing;
-                this.emit("ping", this._ping);
-            } catch {
-                wc.emit("close", false);
-            }
-        }, 15000);
+            promise.then(() => this._generatePing());
+        }
     }
 
     private _handleOldWC(wc: WrappedConnection) {

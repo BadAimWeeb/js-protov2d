@@ -109,7 +109,9 @@ export async function connectWithCustomConnect<CustomConfig, BackendData>(
             });
             sessionObject = baseSession;
 
-            baseSession.wc!.once("close", async (explict) => {
+            baseSession.wc!.once("close", async (explict, reason) => {
+                log("connection closed, explict: %s, reason: %s", explict, reason);
+
                 // do not reconnect if explictly closed
                 if (explict && !config.alwaysReconnect) {
                     baseSession.emit("finalClose"); return;
@@ -136,6 +138,7 @@ export async function connectWithCustomConnect<CustomConfig, BackendData>(
         } catch (e) {
             if (e instanceof NRError) throw e;
             err = e;
+            if (r === (config.maxInitialRetries ?? Infinity) - 1) break;
             await new Promise<void>(r => setTimeout(r, config.reconnectionTime || 5000));
         }
     }
