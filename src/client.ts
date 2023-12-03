@@ -354,16 +354,19 @@ export function connectWrapped<BackendData>(config: ClientWCConfig<BackendData>)
                                 let signaturePKClassic = signaturePK.slice(0, 32);
                                 let signaturePKPQ = signaturePK.slice(32);
 
+                                let pqPK256 = new Uint8Array(await crypto.subtle.digest("SHA-512", pqPK));
+                                let pqPK256256 = new Uint8Array(await crypto.subtle.digest("SHA-512", joinUint8Array(SHA512_NULL, pqPK256)));
+
                                 if (signature[64] !== 0xf3 || signature[65] !== 0x11) {
                                     rejectHandshake("Invalid signature"); return;
                                 }
 
-                                let verified1 = ed25519.verify(signatureClassic, pqPK, signaturePKClassic);
+                                let verified1 = ed25519.verify(signatureClassic, pqPK256256, signaturePKClassic);
                                 if (!verified1) {
                                     rejectHandshake("New public key classic signature verification failed"); return;
                                 }
 
-                                let verified2 = await dilithium5.verify(signaturePQ, pqPK, signaturePKPQ);
+                                let verified2 = await dilithium5.verify(signaturePQ, pqPK256256, signaturePKPQ);
                                 if (!verified2) {
                                     rejectHandshake("New public key PQ signature verification failed"); return;
                                 }

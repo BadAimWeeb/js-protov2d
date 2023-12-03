@@ -280,8 +280,12 @@ export class ProtoV2dServer extends EventEmitter {
                         // Version 1 only uses post-quantum encryption.
                         asymmKeyPQ = await (await this.kyber).keypair();
 
-                        let { signature: signaturePQ } = await (await this.dilithium5).sign(asymmKeyPQ.publicKey, this.pqKeyPair.privateKey);
-                        let signatureClassic = ed25519.sign(asymmKeyPQ.publicKey, this.classicKeyPair.privateKey.slice(0, 32));
+                        // v1 server require signature of sha512(sha512(null) + sha512(random from server)).
+                        let key512 = new Uint8Array(await crypto.subtle.digest("SHA-512", asymmKeyPQ.publicKey));
+                        let key512512 = new Uint8Array(await crypto.subtle.digest("SHA-512", joinUint8Array(SHA512_NULL, key512)));
+
+                        let { signature: signaturePQ } = await (await this.dilithium5).sign(key512512, this.pqKeyPair.privateKey);
+                        let signatureClassic = ed25519.sign(key512512, this.classicKeyPair.privateKey.slice(0, 32));
 
                         let handshakePacket = encode([
                             2,
