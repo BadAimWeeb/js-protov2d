@@ -4,6 +4,7 @@ import { aesDecrypt, aesEncrypt, joinUint8Array } from "./utils.js";
 import debug from "debug";
 
 const log = debug("protov2d:session");
+const logDisconnect = debug("protov2d:session:disconnect");
 
 interface ProtoV2dSessionEvent {
     /** Use this to receive data */
@@ -55,11 +56,14 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
     }
 
     set wc(wc: WrappedConnection<BackendData> | null) {
-        if (this._wc) this._handleOldWC(this._wc);
+        let oldWC = this._wc;
+        if (oldWC) this._handleOldWC(oldWC);
+
         this.emit("wcChanged", this._wc, wc);
         this.emit("connected");
         this._wc = wc;
         if (wc) this._handleWC(wc);
+        if (oldWC) this._handleOldWC2(oldWC);
     }
 
     private _ping = Infinity;
@@ -192,6 +196,11 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
         }
     }
 
+    private _handleOldWC2(wc: WrappedConnection) {
+        // Disconnect old WC after swapped with new WC
+        wc.emit("close", true, "Replaced by new WC");
+    }
+
     //#region Event stuff
     private async _handleIncomingWCMessage(data: Uint8Array) {
         switch (data[0]) {
@@ -259,7 +268,8 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
     }
     private _bindHandleIncomingWCMessage = this._handleIncomingWCMessage.bind(this);
 
-    private _handleWCCloseEvent() {
+    private _handleWCCloseEvent(explict: boolean, reason?: string) {
+        logDisconnect(`wc close event: explict %s, reason %s`, explict, reason);
         this.emit("disconnected");
         this.wc!.removeListener("close", this._bindHandleWCCloseEvent);
     }

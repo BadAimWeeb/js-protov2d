@@ -109,7 +109,7 @@ export async function connectWithCustomConnect<CustomConfig, BackendData>(
             });
             sessionObject = baseSession;
 
-            baseSession.wc!.once("close", async (explict, reason) => {
+            async function onWCDisconnect(explict: boolean, reason?: string) {
                 log("connection closed, explict: %s, reason: %s", explict, reason);
 
                 // do not reconnect if explictly closed
@@ -128,11 +128,15 @@ export async function connectWithCustomConnect<CustomConfig, BackendData>(
                             }
                         });
 
+                        sessionObject!.wc!.once("close", onWCDisconnect);
+
                         return;
                     } catch {
                         await new Promise<void>(r => setTimeout(r, config.reconnectionTime || 5000));
                     }
-            });
+            }
+
+            sessionObject.wc!.once("close", onWCDisconnect);
 
             return baseSession;
         } catch (e) {
@@ -173,10 +177,10 @@ export function connectWebsocket(config: ClientWSConfig) {
         }
 
         function handleClose(e: WebSocket.CloseEvent) {
-            reject(new Error(e.reason));
+            reject(new Error(e.reason || e.code.toString()));
 
             if (!wc.closed) {
-                wc.emit("close", false, e.reason);
+                wc.emit("close", false, e.reason || e.code.toString());
             }
 
             ws.removeEventListener("error", handleError);

@@ -216,7 +216,7 @@ export class ProtoV2dServer extends EventEmitter {
         client.on("close", (code, reason) => {
             this.debug("connection closed: %d %s", code, reason);
             if (wrapped.closed) return;
-            wrapped.emit("close", false, Buffer.from(reason).toString("utf-8"));
+            wrapped.emit("close", false, Buffer.from(reason).toString("utf-8") || code.toString());
         });
 
         client.on("error", (err) => {
