@@ -164,7 +164,7 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
             })();
         }
 
-        this._pingClock = setInterval(this._generatePing, this.pingInterval);
+        this._pingClock = setInterval(() => this._generatePing(), this.pingInterval);
         if (this.clientSide) {
             this._generatePing(); // Generate ping immediately
         } else {
