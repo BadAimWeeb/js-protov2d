@@ -145,34 +145,37 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
         }
     }
 
+    // maybe be a little bit slower.
+    private _waitPromise: Promise<void> | null = null;
     private _handleWC(wc: WrappedConnection) {
         wc.on("rx", this._bindHandleIncomingWCMessage);
         wc.on("close", this._bindHandleWCCloseEvent);
 
-        // Retry unsuccessful QoS1
-        for (let dupID of this._qos1Wait) {
-            (async () => {
-                if (!this._qos1Buffer.has(dupID)) return;
-
-                let originalResolve = this._qos1ACKCallback.get(dupID);
-                let data = this._qos1Buffer.get(dupID)! as Uint8Array;
-
-                try {
-                    await this.send(1, data, dupID);
-                    originalResolve?.();
-                } catch { }
-            })();
-        }
-
         this._pingClock = setInterval(() => this._generatePing(), this.pingInterval);
         if (this.clientSide) {
             this._generatePing(); // Generate ping immediately
+
+            // Retry unsuccessful QoS1
+            for (let dupID of this._qos1Wait) {
+                (async () => {
+                    if (!this._qos1Buffer.has(dupID)) return;
+
+                    let originalResolve = this._qos1ACKCallback.get(dupID);
+                    let data = this._qos1Buffer.get(dupID)! as Uint8Array;
+
+                    try {
+                        await this.send(1, data, dupID);
+                        originalResolve?.();
+                    } catch { }
+                })();
+            }
         } else {
             // If we're in server side, we don't want to send the ping packet too fast,
             // otherwise client (which still haven't done resolving handshake yet) will be confused
             // and close the connection.
-            // Wait for first ping packet from client before sending our own ping packet.
-            let resolvePromise: () => void, promise = new Promise<void>((resolve) => resolvePromise = resolve);
+            // Wait for first ping packet from client before sending our own ping packet (and unsuccessful data).
+            let resolvePromise: () => void;
+            this._waitPromise = new Promise<void>((resolve) => resolvePromise = resolve);
 
             function handlePingPacket(data: Uint8Array) {
                 if (data[0] !== 0x04) return;
@@ -183,7 +186,23 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
             }
             wc.on("rx", handlePingPacket);
 
-            promise.then(() => this._generatePing());
+            this._waitPromise.then(() => this._generatePing());
+            this._waitPromise.then(() => {
+                // Retry unsuccessful QoS1
+                for (let dupID of this._qos1Wait) {
+                    (async () => {
+                        if (!this._qos1Buffer.has(dupID)) return;
+
+                        let originalResolve = this._qos1ACKCallback.get(dupID);
+                        let data = this._qos1Buffer.get(dupID)! as Uint8Array;
+
+                        try {
+                            await this.send(1, data, dupID);
+                            originalResolve?.();
+                        } catch { }
+                    })();
+                }
+            });
         }
     }
 
@@ -194,6 +213,7 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
             clearInterval(this._pingClock);
             this._pingClock = null;
         }
+        this._waitPromise = null;
     }
 
     private _handleOldWC2(wc: WrappedConnection) {
@@ -305,7 +325,9 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
 
     /** Send data to other side */
     public async send(QoS: 0 | 1, data: Uint8Array, overrideDupID?: number): Promise<void> {
-        if (!this.wc) throw new Error("No connection");
+        // maybe we should wait for the handshake and ping to be done first
+        await this._waitPromise;
+
         if (QoS === 1) {
             let dupID = overrideDupID ?? ((this._qos1Counter++ << 1) | (this.clientSide ? 0 : 1));
 
@@ -329,7 +351,7 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
                         let pr = () => { }, waitResolve = new Promise<void>((resolve) => pr = resolve);
                         this._qos1ACKCallback.set(dupID, pr);
 
-                        this.wc!.send(joinUint8Array([0x03], packet));
+                        this.wc?.send(joinUint8Array([0x03], packet));
 
                         try {
                             await Promise.race([
@@ -349,7 +371,7 @@ export default class ProtoV2dSession<BackendData = any> extends TypedEmitter<Pro
                 }
             });
         } else {
-            this.wc.send(await this._encrypt(joinUint8Array([0x00], data)));
+            this.wc?.send(await this._encrypt(joinUint8Array([0x00], data)));
         }
     }
 }
