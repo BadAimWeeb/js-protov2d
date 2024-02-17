@@ -119,7 +119,7 @@ export async function connectWithCustomConnect<CustomConfig, BackendData>(
 
                 for (; ;)
                     try {
-                        await connectFunc({
+                        sessionObject = await connectFunc({
                             ...config,
                             existingData: {
                                 sessionKey,
