@@ -1,7 +1,7 @@
 import type { Server as HTTPServer, IncomingMessage } from "http";
 import type { Server as HTTPSServer } from "https";
 
-import ws from "ws";
+import { WebSocketServer, WebSocket, Data as WebSocketData } from "ws";
 import { EventEmitter } from "events";
 import { Buffer } from "buffer";
 import { encode, decode } from "msgpack-lite";
@@ -47,7 +47,7 @@ export type ServerConfig = {
 } & (
         { port: number } |
         { server: HTTPServer | HTTPSServer } |
-        { wsServer: ws.Server } |
+        { wsServer: WebSocketServer } |
         {}
     )
 
@@ -64,7 +64,7 @@ export interface ProtoV2dServer extends EventEmitter {
 export class ProtoV2dServer extends EventEmitter {
     private debug = debug("protov2d:server");
 
-    public wsServer: ws.Server;
+    public wsServer: WebSocketServer;
     private sessions: Map<string, ProtoV2dSession> = new Map();
     private trustProxy: boolean | (ip.Address4 | ip.Address6)[];
 
@@ -130,13 +130,13 @@ export class ProtoV2dServer extends EventEmitter {
         }
 
         if ("server" in config) {
-            this.wsServer = new ws.Server({ server: config.server });
+            this.wsServer = new WebSocketServer({ server: config.server });
         } else if ("port" in config) {
-            this.wsServer = new ws.Server({ port: config.port });
+            this.wsServer = new WebSocketServer({ port: config.port });
         } else if ("wsServer" in config) {
             this.wsServer = config.wsServer;
         } else {
-            this.wsServer = new ws.Server({ noServer: true });
+            this.wsServer = new WebSocketServer({ noServer: true });
         }
 
         this.wsServer.on("connection", this.handleWSConnection.bind(this));
@@ -155,7 +155,7 @@ export class ProtoV2dServer extends EventEmitter {
     }
 
     /** Pass existing WebSocket connection here. */
-    public handleWSConnection(client: ws.WebSocket, header: IncomingMessage) {
+    public handleWSConnection(client: WebSocket, header: IncomingMessage) {
         client.binaryType = "arraybuffer";
 
         let realIP: ip.Address4 | ip.Address6 | null = null;
@@ -178,7 +178,7 @@ export class ProtoV2dServer extends EventEmitter {
         this.debug("incoming connection from %s", realIP?.address ?? "unknown");
 
         let wrapped = new WrappedConnection(realIP, client);
-        client.on("message", (data: ws.Data) => {
+        client.on("message", (data: WebSocketData) => {
             let rawPacket: Uint8Array;
 
             if (typeof data === "string") {
@@ -206,7 +206,7 @@ export class ProtoV2dServer extends EventEmitter {
         });
 
         wrapped.on("close", (explictClose, reason) => {
-            if (client.readyState !== ws.CLOSING && client.readyState !== ws.CLOSED) {
+            if (client.readyState !== WebSocket.CLOSING && client.readyState !== WebSocket.CLOSED) {
                 this.debug("request connection close: explict %s, reason %s", explictClose, reason);
                 client.close(1000, reason);
             }

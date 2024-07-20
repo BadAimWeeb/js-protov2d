@@ -1,6 +1,6 @@
 {
   "name": "@badaimweeb/js-protov2d",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "libp2p-less/hardlinked variant of ProtoV2",
   "main": "dist/index.js",
   "browser": {
@@ -25,23 +25,23 @@
   "devDependencies": {
     "@types/debug": "^4.1.12",
     "@types/msgpack-lite": "^0.1.11",
-    "@types/node": "^20.10.2",
-    "@types/ws": "^8.5.4",
-    "rimraf": "^5.0.5",
-    "typescript": "^5.3.2"
+    "@types/node": "^20.14.11",
+    "@types/ws": "^8.5.11",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.5.3"
   },
   "dependencies": {
     "@dashlane/pqc-kem-kyber1024-browser": "^1.0.0",
     "@dashlane/pqc-kem-kyber1024-node": "^1.0.0",
     "@dashlane/pqc-sign-dilithium5-browser": "^1.0.0",
     "@dashlane/pqc-sign-dilithium5-node": "^1.0.0",
-    "@noble/curves": "^1.2.0",
-    "debug": "^4.3.4",
+    "@noble/curves": "^1.4.2",
+    "debug": "^4.3.5",
     "ip-address": "^9.0.5",
     "isomorphic-ws": "^5.0.0",
     "msgpack-lite": "^0.1.26",
     "tiny-typed-emitter": "^2.1.0",
-    "ws": "^8.12.1"
+    "ws": "^8.18.0"
   },
   "engines": {
     "node": ">=20.0.0"
